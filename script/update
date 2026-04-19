@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+if [ -d ".venv" ]; then
+    echo "==> Removing old venv"
+    rm -rf .venv
+fi
+
+echo "==> Creating virtualenv"
+python3 -m venv .venv
+
+echo "==> Installing package"
+.venv/bin/pip install -e ".[dev]"
+
+echo "==> Done"

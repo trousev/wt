@@ -1,0 +1,61 @@
+#!/bin/bash
+set -e
+
+RANGE_START=9001
+RANGE_END=9050
+
+show_help() {
+    cat << EOF
+Usage: random-port [OPTIONS]
+
+Output a deterministic port based on the current working directory.
+The same directory will always produce the same port.
+
+Options:
+  -h, --help        Show this help message
+  --range START:END Set custom port range (default: 9001:9050)
+
+Examples:
+  random-port                     # Port in 9001-9050
+  random-port --range 8000:9000   # Port in 8000-9000
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        --range)
+            if [[ -z "$2" ]]; then
+                echo "Error: --range requires START:END argument" >&2
+                exit 1
+            fi
+            if [[ ! "$2" =~ ^[0-9]+:[0-9]+$ ]]; then
+                echo "Error: Invalid range format. Use START:END (e.g., 8000:9000)" >&2
+                exit 1
+            fi
+            RANGE_START="${2%%:*}"
+            RANGE_END="${2##*:}"
+            if [[ $RANGE_START -ge $RANGE_END ]]; then
+                echo "Error: START must be less than END" >&2
+                exit 1
+            fi
+            shift 2
+            ;;
+        *)
+            echo "Error: Unknown option: $1" >&2
+            echo "Use --help for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+HASH=$(pwd | shasum | cut -c1-8)
+HASH_NUM=$((16#$HASH))
+
+RANGE_SIZE=$((RANGE_END - RANGE_START + 1))
+PORT=$((HASH_NUM % RANGE_SIZE + RANGE_START))
+
+echo $PORT

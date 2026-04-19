@@ -1,0 +1,11 @@
+#!/bin/bash
+set -e
+
+cd "$(dirname "$0")/.."
+
+if [ ! -d ".venv" ]; then
+    echo "==> .venv not found, running update..."
+    ./script/update
+fi
+
+exec .venv/bin/python bin/lm "$@"

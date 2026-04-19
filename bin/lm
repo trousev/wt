@@ -1,0 +1,1532 @@
+#!/usr/bin/env python3
+"""lm — create git worktrees with random branch names and terminal multi-pane layouts.
+Supports iTerm2 and Wezterm backends."""
+
+import argparse
+import json
+import os
+import random
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from dataclasses import dataclass
+
+import yaml
+
+from lm import config, terminal
+from lm.terminal import TAB_COLORS
+
+_WORDS_1 = (
+    "quick",
+    "calm",
+    "bold",
+    "warm",
+    "cool",
+    "keen",
+    "fair",
+    "vast",
+    "soft",
+    "pure",
+    "wild",
+    "free",
+    "deep",
+    "slim",
+    "rare",
+    "flat",
+    "dark",
+    "pale",
+    "long",
+    "wide",
+    "high",
+    "low",
+    "dry",
+    "wet",
+    "hot",
+    "cold",
+    "new",
+    "old",
+    "big",
+    "raw",
+    "rich",
+    "slow",
+    "loud",
+    "fast",
+    "full",
+    "thin",
+    "firm",
+    "safe",
+    "kind",
+    "wise",
+    "glad",
+    "mild",
+    "true",
+    "real",
+    "neat",
+    "dull",
+    "grim",
+    "tame",
+    "wry",
+    "coy",
+    "sly",
+    "apt",
+    "fit",
+    "due",
+    "shy",
+    "odd",
+    "dim",
+    "lax",
+    "tidy",
+    "lazy",
+    "busy",
+    "cozy",
+    "hazy",
+    "icy",
+    "airy",
+    "zany",
+    "rosy",
+    "wavy",
+    "edgy",
+    "arty",
+    "deft",
+    "foxy",
+    "gory",
+    "lush",
+    "mute",
+    "oily",
+    "plum",
+    "ripe",
+    "smug",
+    "tart",
+    "lean",
+    "damp",
+    "glib",
+    "prim",
+    "snug",
+    "wiry",
+    "bald",
+    "deaf",
+    "grey",
+    "pink",
+    "blue",
+    "gold",
+    "iron",
+    "jade",
+    "mint",
+    "ruby",
+    "sage",
+    "teal",
+    "onyx",
+    "opal",
+    "ashy",
+    "inky",
+)
+
+_WORDS_2 = (
+    "nice",
+    "tall",
+    "round",
+    "sharp",
+    "sweet",
+    "dense",
+    "fresh",
+    "blank",
+    "brief",
+    "clear",
+    "grand",
+    "light",
+    "quiet",
+    "rough",
+    "solid",
+    "steep",
+    "thick",
+    "tight",
+    "young",
+    "stark",
+    "plain",
+    "brisk",
+    "clean",
+    "crisp",
+    "fluid",
+    "hardy",
+    "jolly",
+    "noble",
+    "proud",
+    "rapid",
+    "rigid",
+    "sober",
+    "stiff",
+    "vivid",
+    "blunt",
+    "crude",
+    "dusty",
+    "fiery",
+    "foggy",
+    "fuzzy",
+    "hefty",
+    "husky",
+    "lumpy",
+    "misty",
+    "murky",
+    "mushy",
+    "nervy",
+    "perky",
+    "rusty",
+    "salty",
+    "silky",
+    "smoky",
+    "spicy",
+    "stale",
+    "sunny",
+    "tangy",
+    "witty",
+    "woody",
+    "zesty",
+    "agile",
+    "ample",
+    "civic",
+    "cyber",
+    "exact",
+    "final",
+    "first",
+    "great",
+    "inner",
+    "joint",
+    "lunar",
+    "major",
+    "minor",
+    "moral",
+    "naive",
+    "outer",
+    "polar",
+    "prime",
+    "royal",
+    "solar",
+    "super",
+    "total",
+    "ultra",
+    "upper",
+    "urban",
+    "viral",
+    "vocal",
+    "astral",
+    "azure",
+    "coral",
+    "ivory",
+    "maple",
+    "olive",
+    "peach",
+    "pearl",
+    "cedar",
+    "elfin",
+    "sonic",
+    "nifty",
+    "pithy",
+    "lanky",
+    "meaty",
+    "ruddy",
+    "stark",
+    "gruff",
+    "alpha",
+    "briny",
+    "droll",
+    "dusky",
+    "fleet",
+)
+
+BRANCH_NAME_SYSTEM_PROMPT = """\
+You are a helpful assistant that generates concise, descriptive git branch names.
+
+Based on the provided git diff, generate a single branch name that:
+- Uses kebab-case (lowercase with hyphens)
+- Is descriptive but concise (2-4 words preferred)
+- Describes what the changes accomplish
+- Follows common git branch naming conventions
+- Does not include prefixes like 'feature/' or 'fix/'
+
+Examples of good branch names:
+- add-user-authentication
+- fix-memory-leak
+- update-api-docs
+- remove-deprecated-config
+- refactor-payment-flow
+
+Only return the branch name, nothing else. No explanations, no quotes, just the branch name."""
+
+STATUSES = {
+    "working": {"letter": "W", "color": "yellow"},
+    "pr": {"letter": "P", "color": "yellow"},
+    "review": {"letter": "R", "color": "blue"},
+    "green": {"letter": "G", "color": "green"},
+    "approved": {"letter": "A", "color": "bright_green"},
+    "conflicts": {"letter": "C", "color": "red"},
+    "failed": {"letter": "F", "color": "red"},
+    "backlog": {"letter": "B", "color": "gray"},
+    "done": {"letter": "D", "color": "gray"},
+}
+
+DEFAULT_STATUS = "working"
+
+BOT_REVIEWER_LOGINS = frozenset({"claude"})
+
+ALIASES: dict[str, list[str]] = {
+    "new": ["n"],
+    "warp": ["w"],
+    "restore": ["re"],
+    "destroy": ["d"],
+    "rename": ["rn"],
+    "list": ["l"],
+    "status": ["s"],
+    "pull": ["pl"],
+    "open": ["o"],
+    "setup": ["su"],
+    "run": ["r"],
+    "config": ["c"],
+}
+
+
+def die(msg: str) -> None:
+    print(f"error: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _run_script(script_content: str | list[str]) -> None:
+    """Execute a script (string or list of strings) with CONDUCTOR_PORT set."""
+    if isinstance(script_content, list):
+        script_content = "\n".join(script_content)
+
+    if not script_content:
+        die("no script provided")
+
+    result = subprocess.run(
+        [os.path.join(os.path.dirname(os.path.abspath(__file__)), "random-port")],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    port = result.stdout.strip()
+
+    env = os.environ.copy()
+    env["CONDUCTOR_PORT"] = port
+
+    repo_root = get_repo_root()
+    os.chdir(repo_root)
+
+    if script_content.startswith("#!"):
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".sh", delete=False)
+        tmp.write(script_content)
+        tmp.close()
+        os.chmod(tmp.name, 0o755)
+        os.execve(tmp.name, [tmp.name], env)
+    else:
+        os.execve("/bin/sh", ["/bin/sh", "-c", script_content], env)
+
+
+def _run_conductor_script(script_name: str) -> None:
+    """Execute a named script from conductor.json with CONDUCTOR_PORT set."""
+    repo_root = get_repo_root()
+    conductor_path = os.path.join(repo_root, "conductor.json")
+
+    if not os.path.isfile(conductor_path):
+        die("conductor.json not found in repository root")
+
+    with open(conductor_path) as f:
+        conductor = json.load(f)
+
+    script = conductor.get("scripts", {}).get(script_name)
+    if not script:
+        die(f"no '{script_name}' script in conductor.json")
+    if not isinstance(script, str):
+        die(f"'{script_name}' script in conductor.json must be a string")
+
+    _run_script(script)
+
+
+def _get_iterm_session_id() -> str | None:
+    """Extract the UUID from ITERM_SESSION_ID (format ``w0t7p0:UUID``)."""
+    raw = os.environ.get("ITERM_SESSION_ID", "")
+    if ":" in raw:
+        return raw.split(":", 1)[1]
+    return None
+
+
+def _get_wezterm_pane_id() -> str | None:
+    """Return the pane ID from WEZTERM_PANE environment variable."""
+    return os.environ.get("WEZTERM_PANE")
+
+
+def _status_dir() -> str:
+    """Return the path to the status directory."""
+    return os.path.join(os.path.expanduser("~/.worktrees"), ".status")
+
+
+def _status_file(wt_path: str) -> str:
+    """Return the status file path for a given worktree."""
+    dirname = os.path.basename(os.path.realpath(wt_path))
+    return os.path.join(_status_dir(), dirname)
+
+
+def read_status(wt_path: str) -> str:
+    """Read the status for a worktree, defaulting to 'working'."""
+    path = _status_file(wt_path)
+    try:
+        return open(path).read().strip() or DEFAULT_STATUS
+    except FileNotFoundError:
+        return DEFAULT_STATUS
+
+
+def write_status(wt_path: str, status: str) -> None:
+    """Write a status name to the worktree's status file."""
+    os.makedirs(_status_dir(), exist_ok=True)
+    with open(_status_file(wt_path), "w") as f:
+        f.write(status + "\n")
+
+
+def remove_status(wt_path: str) -> None:
+    """Remove the status file for a worktree."""
+    try:
+        os.remove(_status_file(wt_path))
+    except FileNotFoundError:
+        pass
+
+
+def resolve_status(user_input: str) -> str:
+    """Resolve user input (letter, name, or prefix) to canonical status name.
+
+    Accepts: full name ('approved'), single letter ('a'), or unambiguous prefix ('ap').
+    """
+    user_input = user_input.lower().strip()
+
+    if user_input in STATUSES:
+        return user_input
+
+    if len(user_input) == 1:
+        for name, info in STATUSES.items():
+            if info["letter"].lower() == user_input:
+                return name
+        die(f"unknown status letter: {user_input}")
+
+    matches = [name for name in STATUSES if name.startswith(user_input)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        die(f"ambiguous status prefix '{user_input}': {', '.join(matches)}")
+
+    die(f"unknown status: {user_input}")
+    return ""
+
+
+def ensure_gh_available() -> None:
+    """Validate that gh CLI is installed and authenticated."""
+    if not shutil.which("gh"):
+        die("gh CLI not found on PATH (install from https://cli.github.com)")
+    try:
+        subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        die("gh is not authenticated — run 'gh auth login' first")
+
+
+def fetch_pr_data(branch: str, repo_root: str) -> dict | None:
+    """Fetch PR data for a branch from GitHub. Returns parsed dict or None."""
+    try:
+        result = subprocess.run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--head",
+                branch,
+                "--state",
+                "all",
+                "--json",
+                "state,isDraft,mergeable,reviewRequests,reviews,reviewDecision,statusCheckRollup",
+                "--limit",
+                "1",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=repo_root,
+        )
+        prs = json.loads(result.stdout)
+        return prs[0] if prs else None
+    except (subprocess.CalledProcessError, json.JSONDecodeError, IndexError):
+        return None
+
+
+def _is_bot_reviewer(login: str) -> bool:
+    """Return True if the login belongs to a bot reviewer."""
+    if not login:
+        return False
+    return login.endswith("[bot]") or login.lower() in BOT_REVIEWER_LOGINS
+
+
+def _all_checks_passed(pr_data: dict) -> bool:
+    """Return True when statusCheckRollup is non-empty and every check succeeded.
+
+    - CheckRun: status COMPLETED with conclusion in {SUCCESS, NEUTRAL, SKIPPED}
+    - StatusContext: state SUCCESS
+    - Empty rollup → False (no evidence of CI)
+    """
+    checks = pr_data.get("statusCheckRollup") or []
+    if not checks:
+        return False
+    for check in checks:
+        typename = check.get("__typename", "")
+        if typename == "CheckRun":
+            if (check.get("status") or "").upper() != "COMPLETED":
+                return False
+            if (check.get("conclusion") or "").upper() not in ("SUCCESS", "NEUTRAL", "SKIPPED"):
+                return False
+        elif typename == "StatusContext":
+            if (check.get("state") or "").upper() != "SUCCESS":
+                return False
+    return True
+
+
+def determine_status_from_pr(pr_data: dict | None) -> str:
+    """Determine worktree status from GitHub PR data.
+
+    Priority order (highest wins):
+    1. No PR → working
+    2. CLOSED/MERGED → done
+    3. Merge conflicts → conflicts
+    4. Any CI failure/error → failed
+    5. reviewDecision APPROVED → approved
+    6. reviewDecision CHANGES_REQUESTED → review
+    7. All CI checks passed → green
+    8. Fallback → pr
+    """
+    if pr_data is None:
+        return "working"
+
+    state = pr_data.get("state", "").upper()
+    if state in ("CLOSED", "MERGED"):
+        return "done"
+
+    if (pr_data.get("mergeable") or "").upper() == "CONFLICTING":
+        return "conflicts"
+
+    for check in pr_data.get("statusCheckRollup", []) or []:
+        typename = check.get("__typename", "")
+        if typename == "CheckRun":
+            conclusion = (check.get("conclusion") or "").upper()
+            if conclusion in ("FAILURE", "ERROR"):
+                return "failed"
+        elif typename == "StatusContext":
+            ctx_state = (check.get("state") or "").upper()
+            if ctx_state in ("FAILURE", "ERROR"):
+                return "failed"
+
+    if (pr_data.get("reviewDecision") or "").upper() == "APPROVED":
+        return "approved"
+
+    if (pr_data.get("reviewDecision") or "").upper() == "CHANGES_REQUESTED":
+        return "review"
+
+    if _all_checks_passed(pr_data):
+        return "green"
+
+    return "pr"
+
+
+def make_pane_label(repo_dir: str, branch: str, status: str = "working") -> str:
+    """Build a short pane title like ``[W] ij:bold-nice``."""
+    import re as _re
+
+    letter = STATUSES[status]["letter"]
+    name = os.path.basename(repo_dir)
+    words = [w for w in _re.split(r"[^a-zA-Z0-9]+", name) if w]
+    abbrev = "".join(w[0] for w in words[:2]).lower()
+    short = branch.removeprefix("rename/")
+    return f"[{letter}] {abbrev}:{short}"
+
+
+def run_git(*args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def ensure_git_repo() -> None:
+    try:
+        run_git("rev-parse", "--git-dir")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        die("not in a git repository")
+
+
+def get_repo_root() -> str:
+    return run_git("rev-parse", "--show-toplevel")
+
+
+def branch_exists(name: str) -> bool:
+    try:
+        run_git("show-ref", "--verify", "--quiet", f"refs/heads/{name}")
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def detect_remote_default_branch() -> str | None:
+    """Detect the remote's default branch (e.g. main or master).
+
+    Three-tier detection:
+    1. git symbolic-ref refs/remotes/origin/HEAD (canonical)
+    2. Check if origin/main exists
+    3. Check if origin/master exists
+    """
+    try:
+        ref = run_git("symbolic-ref", "refs/remotes/origin/HEAD")
+        branch = ref.removeprefix("refs/remotes/origin/")
+        if branch:
+            return branch
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        run_git("rev-parse", "--verify", "origin/main")
+        return "main"
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        run_git("rev-parse", "--verify", "origin/master")
+        return "master"
+    except subprocess.CalledProcessError:
+        pass
+
+    return None
+
+
+def fetch_remote_branch(branch: str) -> bool:
+    """Fetch a branch from origin. Returns True on success."""
+    try:
+        subprocess.run(
+            ["git", "fetch", "origin", branch, "--no-tags"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def create_worktree(
+    wt_path: str, branch: str, base: str | None = None, *, new_branch: bool = True
+) -> None:
+    if new_branch:
+        cmd = ["git", "worktree", "add", wt_path, "-b", branch]
+        if base:
+            cmd.append(base)
+    else:
+        cmd = ["git", "worktree", "add", wt_path, branch]
+    subprocess.run(cmd, check=True)
+
+
+def remove_worktree(wt_path: str, branch: str) -> None:
+    """Best-effort cleanup of a worktree and its branch."""
+    try:
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", wt_path],
+            capture_output=True,
+            check=False,
+        )
+    except Exception:
+        pass
+    try:
+        subprocess.run(
+            ["git", "branch", "-D", branch],
+            capture_output=True,
+            check=False,
+        )
+    except Exception:
+        pass
+
+
+@dataclass
+class WorktreeInfo:
+    path: str
+    head: str
+    branch: str | None
+
+
+def parse_worktree_list() -> list[WorktreeInfo]:
+    """Parse ``git worktree list --porcelain`` into structured data."""
+    raw = run_git("worktree", "list", "--porcelain")
+    entries: list[WorktreeInfo] = []
+    path = head = branch = None
+    for line in raw.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree ") :]
+        elif line.startswith("HEAD "):
+            head = line[len("HEAD ") :]
+        elif line.startswith("branch "):
+            branch = line[len("branch ") :].removeprefix("refs/heads/")
+        elif line == "":
+            if path and head:
+                entries.append(WorktreeInfo(path=path, head=head, branch=branch))
+            path = head = branch = None
+    if path and head:
+        entries.append(WorktreeInfo(path=path, head=head, branch=branch))
+    return entries
+
+
+def get_worktrees_base() -> str:
+    """Return the canonical path to the worktrees directory."""
+    return os.path.realpath(os.path.expanduser("~/.worktrees"))
+
+
+def is_inside_worktree() -> bool:
+    """True if the cwd is inside a linked worktree (not the main working tree)."""
+    try:
+        git_dir = os.path.realpath(run_git("rev-parse", "--git-dir"))
+        common_dir = os.path.realpath(run_git("rev-parse", "--git-common-dir"))
+        return git_dir != common_dir
+    except subprocess.CalledProcessError:
+        return False
+
+
+def get_main_branch() -> str:
+    """Detect the main branch (main or master) from the remote."""
+    try:
+        ref = run_git("symbolic-ref", "refs/remotes/origin/HEAD")
+        return ref.removeprefix("refs/remotes/origin/")
+    except subprocess.CalledProcessError:
+        pass
+    try:
+        run_git("rev-parse", "--verify", "origin/main")
+        return "main"
+    except subprocess.CalledProcessError:
+        pass
+    try:
+        run_git("rev-parse", "--verify", "origin/master")
+        return "master"
+    except subprocess.CalledProcessError:
+        pass
+    die("could not determine main branch")
+    return ""
+
+
+def get_main_repo_root() -> str:
+    """Return the root of the *main* repository (not the worktree)."""
+    common_dir = os.path.realpath(run_git("rev-parse", "--git-common-dir"))
+    return os.path.dirname(common_dir)
+
+
+def generate_branch_name() -> str:
+    w1 = random.choice(_WORDS_1)
+    w2 = random.choice(_WORDS_2)
+    return f"rename/{w1}-{w2}"
+
+
+def generate_unique_branch_name() -> str:
+    for _ in range(5):
+        name = generate_branch_name()
+        if not branch_exists(name):
+            return name
+    die("could not generate a unique branch name after 5 attempts")
+    return ""
+
+
+def _get_icon_path_for_current_repo() -> str | None:
+    repo_name = config.get_repo_name()
+    if not repo_name:
+        return None
+    return config.get_icon_path_if_exists(repo_name)
+
+
+def cmd_new(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not terminal.is_available():
+        die("no supported terminal emulator found (install iTerm2 shell integration)")
+
+    repo_root = get_repo_root()
+
+    if args.branch:
+        branch = args.branch
+        if branch_exists(branch):
+            die(f"branch '{branch}' already exists")
+    else:
+        branch = generate_unique_branch_name()
+
+    wt_dir = branch.replace("/", "-")
+    wt_base = os.path.expanduser("~/.worktrees")
+    wt_path = os.path.join(wt_base, wt_dir)
+
+    if os.path.exists(wt_path):
+        die(f"worktree directory already exists: {wt_path}")
+
+    os.makedirs(wt_base, exist_ok=True)
+
+    base = args.base
+    if not base:
+        default_branch = detect_remote_default_branch()
+        if default_branch:
+            if not fetch_remote_branch(default_branch):
+                print(
+                    f"warning: could not fetch origin/{default_branch} (offline?), using local ref",
+                    file=sys.stderr,
+                )
+            base = f"origin/{default_branch}"
+        else:
+            print(
+                "warning: could not detect remote default branch, falling back to HEAD",
+                file=sys.stderr,
+            )
+
+    print(f"creating worktree: {branch} -> {wt_path}", file=sys.stderr)
+    try:
+        create_worktree(wt_path, branch, base)
+    except subprocess.CalledProcessError as exc:
+        die(f"git worktree add failed: {exc}")
+
+    write_status(wt_path, DEFAULT_STATUS)
+
+    settings = config.get_current_repo_settings()
+    copy_items = settings.get("copy", [])
+    for item in copy_items:
+        src = os.path.join(repo_root, item)
+        dst = os.path.join(wt_path, item)
+        if os.path.exists(src):
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        else:
+            print(f"warning: '{item}' not found in repo root, skipping", file=sys.stderr)
+
+    pane_title = make_pane_label(repo_root, branch, status=DEFAULT_STATUS)
+    tab_color = TAB_COLORS[STATUSES[DEFAULT_STATUS]["color"]]
+    icon_path = _get_icon_path_for_current_repo()
+    try:
+        terminal.build_layout(wt_path, pane_title, tab_color=tab_color, icon_path=icon_path)
+    except Exception as exc:
+        print(f"terminal layout failed ({exc}), cleaning up…", file=sys.stderr)
+        remove_status(wt_path)
+        remove_worktree(wt_path, branch)
+        sys.exit(1)
+
+    print(f"ready: {branch}", file=sys.stderr)
+
+
+def cmd_warp(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not terminal.is_available():
+        die("no supported terminal emulator found (install iTerm2 shell integration)")
+
+    repo_root = get_repo_root()
+    branch = args.branch
+
+    if not branch_exists(branch):
+        print(f"branch '{branch}' not found locally, fetching from origin…", file=sys.stderr)
+        if not fetch_remote_branch(branch):
+            die(f"branch '{branch}' does not exist locally or on origin")
+
+    wt_dir = branch.replace("/", "-")
+    wt_base = os.path.expanduser("~/.worktrees")
+    wt_path = os.path.join(wt_base, wt_dir)
+
+    if os.path.exists(wt_path):
+        die(f"worktree directory already exists: {wt_path}")
+
+    os.makedirs(wt_base, exist_ok=True)
+
+    print(f"creating worktree: {branch} -> {wt_path}", file=sys.stderr)
+    try:
+        create_worktree(wt_path, branch, new_branch=False)
+    except subprocess.CalledProcessError as exc:
+        die(f"git worktree add failed: {exc}")
+
+    write_status(wt_path, DEFAULT_STATUS)
+
+    pane_title = make_pane_label(repo_root, branch, status=DEFAULT_STATUS)
+    tab_color = TAB_COLORS[STATUSES[DEFAULT_STATUS]["color"]]
+    icon_path = _get_icon_path_for_current_repo()
+    try:
+        terminal.build_layout(wt_path, pane_title, tab_color=tab_color, icon_path=icon_path)
+    except Exception as exc:
+        print(f"terminal layout failed ({exc}), cleaning up…", file=sys.stderr)
+        remove_status(wt_path)
+        try:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", wt_path],
+                capture_output=True,
+                check=False,
+            )
+        except Exception:
+            pass
+        sys.exit(1)
+
+    print(f"ready: {branch}", file=sys.stderr)
+
+
+def cmd_restore(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not terminal.is_available():
+        die("no supported terminal emulator found (install iTerm2 shell integration)")
+
+    repo_root = get_repo_root()
+    target = args.target
+
+    wt_base = get_worktrees_base()
+    worktrees = [
+        w for w in parse_worktree_list() if os.path.realpath(w.path).startswith(wt_base + "/")
+    ]
+
+    match = None
+    for wt in worktrees:
+        if wt.branch == target:
+            match = wt
+            break
+    if not match:
+        for wt in worktrees:
+            short = (wt.branch or "").split("/", 1)[-1]
+            if short == target:
+                match = wt
+                break
+    if not match:
+        for wt in worktrees:
+            if os.path.basename(wt.path) == target:
+                match = wt
+                break
+
+    if not match:
+        die(f"no worktree found matching '{target}'")
+
+    wt_path = os.path.realpath(match.path)
+    if not wt_path.startswith(wt_base + "/"):
+        die("matched worktree is not under ~/.worktrees/ — refusing to restore")
+
+    branch = match.branch
+    if not branch:
+        die("could not determine branch for matched worktree")
+
+    if not os.path.exists(wt_path):
+        die(f"worktree directory does not exist: {wt_path}")
+
+    status = read_status(wt_path)
+    pane_title = make_pane_label(repo_root, branch, status=status)
+    tab_color = TAB_COLORS[STATUSES[status]["color"]]
+
+    print(f"restoring: {branch} ({wt_path})", file=sys.stderr)
+
+    icon_path = _get_icon_path_for_current_repo()
+    try:
+        terminal.build_layout(
+            wt_path,
+            pane_title,
+            tab_color=tab_color,
+            first_pane_command="opencode --continue",
+            icon_path=icon_path,
+        )
+    except Exception as exc:
+        die(f"terminal layout failed: {exc}")
+
+    print(f"ready: {branch}", file=sys.stderr)
+
+
+def _branch_is_empty(wt_path: str, branch: str) -> bool:
+    """Return True if the worktree has zero changes vs the merge-base."""
+    main_branch = get_main_branch()
+
+    def _git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", wt_path, *args],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+
+    try:
+        merge_base = _git("merge-base", "HEAD", f"origin/{main_branch}")
+        if _git("log", "--oneline", f"{merge_base}..HEAD"):
+            return False
+        if _git("diff", "HEAD"):
+            return False
+        if _git("status", "--porcelain"):
+            return False
+    except subprocess.CalledProcessError:
+        return False
+
+    return True
+
+
+def _ensure_done_or_die(wt_path: str, branch: str, repo_root: str, *, force: bool) -> None:
+    """Block destruction unless status is 'done'. Pulls fresh PR state first."""
+    if force:
+        return
+
+    status = read_status(wt_path)
+    if status == "done":
+        return
+
+    if _branch_is_empty(wt_path, branch):
+        print("branch is empty (no changes vs main) — safe to destroy", file=sys.stderr)
+        return
+
+    ensure_gh_available()
+    pr_data = fetch_pr_data(branch, repo_root)
+    new_status = determine_status_from_pr(pr_data)
+
+    if new_status != status:
+        write_status(wt_path, new_status)
+        print(f"{status} → {new_status}", file=sys.stderr)
+
+    if new_status == "done":
+        return
+
+    die(
+        f"status is [{STATUSES[new_status]['letter']}] {new_status}, not [D]one — use --force to destroy anyway"
+    )
+
+
+def cmd_destroy(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+    wt_base = get_worktrees_base()
+
+    if is_inside_worktree():
+        wt_path = os.path.realpath(get_repo_root())
+        if not wt_path.startswith(wt_base + "/"):
+            die("current worktree is not under ~/.worktrees/ — refusing to destroy")
+
+        worktrees = parse_worktree_list()
+        match = next((w for w in worktrees if os.path.realpath(w.path) == wt_path), None)
+        branch = match.branch if match else None
+        if not branch:
+            die("could not determine branch for current worktree")
+
+        main_root = get_main_repo_root()
+        _ensure_done_or_die(wt_path, branch, main_root, force=args.force)
+
+        os.chdir(main_root)
+
+        print(f"destroying worktree: {branch} ({wt_path})", file=sys.stderr)
+        remove_status(wt_path)
+        remove_worktree(wt_path, branch)
+
+        try:
+            terminal.kill_worktree_panes(wt_path)
+        except Exception:
+            pass
+    else:
+        target = args.target
+        if not target:
+            die("not inside a worktree — specify a target: lm destroy <name>")
+
+        worktrees = [
+            w for w in parse_worktree_list() if os.path.realpath(w.path).startswith(wt_base + "/")
+        ]
+
+        match = None
+        for wt in worktrees:
+            if wt.branch == target:
+                match = wt
+                break
+        if not match:
+            for wt in worktrees:
+                short = (wt.branch or "").split("/", 1)[-1]
+                if short == target:
+                    match = wt
+                    break
+        if not match:
+            for wt in worktrees:
+                if os.path.basename(wt.path) == target:
+                    match = wt
+                    break
+
+        if not match:
+            die(f"no worktree found matching '{target}'")
+
+        wt_path = os.path.realpath(match.path)
+        if not wt_path.startswith(wt_base + "/"):
+            die("matched worktree is not under ~/.worktrees/ — refusing to destroy")
+
+        branch = match.branch
+        if not branch:
+            die("could not determine branch for matched worktree")
+
+        _ensure_done_or_die(wt_path, branch, get_main_repo_root(), force=args.force)
+
+        print(f"destroying worktree: {branch} ({wt_path})", file=sys.stderr)
+        remove_status(wt_path)
+        remove_worktree(wt_path, branch)
+
+        try:
+            terminal.kill_worktree_panes(wt_path)
+        except Exception:
+            pass
+
+
+def cmd_rename(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not is_inside_worktree():
+        die("not inside a worktree — run this from a worktree directory")
+
+    try:
+        old_branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+    except subprocess.CalledProcessError:
+        die("could not determine current branch")
+    if old_branch == "HEAD":
+        die("detached HEAD — cannot rename")
+
+    if args.name:
+        new_branch = args.name
+    else:
+        main_branch = get_main_branch()
+        try:
+            merge_base = run_git("merge-base", "HEAD", f"origin/{main_branch}")
+        except subprocess.CalledProcessError:
+            die(f"could not find merge-base with origin/{main_branch}")
+        try:
+            diff = run_git("diff", merge_base)
+        except subprocess.CalledProcessError:
+            die("could not generate diff")
+        if not diff:
+            die("no changes vs main — nothing to name")
+
+        from lm.llm import call_llm_api
+
+        result = call_llm_api(diff, BRANCH_NAME_SYSTEM_PROMPT)
+        if not result or not result.strip():
+            die("LLM returned empty result")
+
+        import re
+
+        new_branch = result.strip().strip('"').strip("'")
+        new_branch = re.sub(r"[^a-zA-Z0-9-]", "-", new_branch)
+        new_branch = re.sub(r"-+", "-", new_branch).strip("-").lower()
+
+        if not new_branch:
+            die("LLM returned an invalid branch name")
+
+    if branch_exists(new_branch):
+        die(f"branch '{new_branch}' already exists — use --name to pick a different name")
+
+    try:
+        run_git("branch", "-m", old_branch, new_branch)
+    except subprocess.CalledProcessError as exc:
+        die(f"git branch -m failed: {exc}")
+
+    print(f"{old_branch} → {new_branch}")
+
+    session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+    if session_id and terminal.is_available():
+        repo_root = get_main_repo_root()
+        new_title = make_pane_label(repo_root, new_branch)
+        try:
+            terminal.rename_pane_titles(new_title, session_id=session_id)
+        except Exception:
+            pass
+
+    try:
+        upstream = run_git("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{new_branch}")
+        if upstream:
+            print(f"\nnote: old branch had upstream '{upstream}'", file=sys.stderr)
+            print(f"  git push origin :{old_branch}", file=sys.stderr)
+            print(f"  git push -u origin {new_branch}", file=sys.stderr)
+    except subprocess.CalledProcessError:
+        pass
+
+
+def cmd_list(_args: argparse.Namespace) -> None:
+    ensure_git_repo()
+    wt_base = get_worktrees_base()
+    worktrees = [
+        w for w in parse_worktree_list() if os.path.realpath(w.path).startswith(wt_base + "/")
+    ]
+
+    if not worktrees:
+        print("no worktrees found under ~/.worktrees/")
+        return
+
+    try:
+        cwd = os.path.realpath(os.getcwd())
+    except OSError:
+        cwd = ""
+
+    for wt in worktrees:
+        label = wt.branch or f"(detached {wt.head[:8]})"
+        dirname = os.path.basename(wt.path)
+        status = read_status(wt.path)
+        marker = " *" if os.path.realpath(wt.path) == cwd else ""
+        print(f"  {label}  {dirname}  {status}{marker}")
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not is_inside_worktree():
+        die("not inside a worktree — run this from a worktree directory")
+
+    wt_path = os.path.realpath(get_repo_root())
+    repo_root = get_main_repo_root()
+
+    try:
+        branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+    except subprocess.CalledProcessError:
+        die("could not determine current branch")
+
+    if not args.status:
+        current = read_status(wt_path)
+        for name, info in STATUSES.items():
+            marker = "* " if name == current else "  "
+            print(f"  {marker}[{info['letter']}] {name}")
+        return
+
+    status = resolve_status(args.status)
+    write_status(wt_path, status)
+
+    pane_title = make_pane_label(repo_root, branch, status=status)
+    tab_color = TAB_COLORS[STATUSES[status]["color"]]
+    icon_path = _get_icon_path_for_current_repo()
+
+    session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+    try:
+        terminal.update_tab_status(
+            pane_title, tab_color, session_id=session_id, icon_path=icon_path
+        )
+    except Exception as exc:
+        print(f"warning: could not update terminal tab ({exc})", file=sys.stderr)
+
+    print(f"{status}", file=sys.stderr)
+
+
+def _pull_once(wt_path: str, repo_root: str) -> None:
+    """Single pull iteration: fetch PR state, update status, sync tab."""
+    branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+    old_status = read_status(wt_path)
+    if old_status == "backlog":
+        print(f"{branch}: backlog (skipped)")
+        return
+
+    pr_data = fetch_pr_data(branch, repo_root)
+    new_status = determine_status_from_pr(pr_data)
+
+    if new_status != old_status:
+        write_status(wt_path, new_status)
+        print(f"{branch}: {old_status} → {new_status}")
+    else:
+        print(f"{branch}: {old_status} (unchanged)")
+
+    if terminal.is_available():
+        pane_title = make_pane_label(repo_root, branch, status=new_status)
+        tab_color = TAB_COLORS[STATUSES[new_status]["color"]]
+        icon_path = _get_icon_path_for_current_repo()
+        session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+        try:
+            terminal.update_tab_status(
+                pane_title, tab_color, session_id=session_id, icon_path=icon_path
+            )
+        except Exception:
+            pass
+
+
+def cmd_pull(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not is_inside_worktree():
+        die("not inside a worktree — run this from a worktree directory")
+
+    ensure_gh_available()
+
+    wt_path = os.path.realpath(get_repo_root())
+    repo_root = get_main_repo_root()
+
+    try:
+        branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+    except subprocess.CalledProcessError:
+        die("could not determine current branch")
+    if branch == "HEAD":
+        die("detached HEAD — cannot pull status")
+
+    _pull_once(wt_path, repo_root)
+
+    if args.watch:
+        try:
+            while True:
+                time.sleep(60)
+                print(f"\n--- pull @ {time.strftime('%H:%M:%S')} ---")
+                _pull_once(wt_path, repo_root)
+        except KeyboardInterrupt:
+            pass
+
+
+def cmd_open(_args: argparse.Namespace) -> None:
+    result = subprocess.run(
+        [os.path.join(os.path.dirname(os.path.abspath(__file__)), "random-port")],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    port = result.stdout.strip()
+    subprocess.run(["open", f"http://localhost:{port}"], check=True)
+
+
+def cmd_pr(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not is_inside_worktree():
+        die("not inside a worktree — run this from a worktree directory")
+
+    try:
+        branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+    except subprocess.CalledProcessError:
+        die("could not determine current branch")
+
+    if branch.startswith("rename/"):
+        print(f"on placeholder branch '{branch}', renaming first…", file=sys.stderr)
+        cmd_rename(argparse.Namespace(name=None))
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    agentic_path = os.path.join(script_dir, "agentic")
+
+    if not os.path.isfile(agentic_path):
+        die(f"agentic script not found at {agentic_path}")
+
+    prompt = (
+        "You are in a git worktree. Create a pull request for the current branch.\n"
+        "\n"
+        "Steps:\n"
+        "1. Run `git context -a` to understand the full scope of changes\n"
+        "2. If there are uncommitted changes, commit them with a clear message\n"
+        "3. Push the branch to origin\n"
+        "4. Create a pull request with `gh pr create` (descriptive title and body)\n"
+        "5. Open the PR in the browser with `gh pr view --web`\n"
+        "\n"
+        "If a PR already exists, just open it with `gh pr view --web`."
+    )
+
+    os.execv(agentic_path, [agentic_path, prompt])
+
+
+def cmd_setup(_args: argparse.Namespace) -> None:
+    ensure_git_repo()
+    repo_name = config.get_repo_name()
+    if config.has_repo_setting(repo_name, "setup"):
+        settings = config.get_current_repo_settings()
+        _run_script(settings["setup"])
+    else:
+        _run_conductor_script("setup")
+
+
+def cmd_run(_args: argparse.Namespace) -> None:
+    ensure_git_repo()
+    repo_name = config.get_repo_name()
+    if config.has_repo_setting(repo_name, "run"):
+        settings = config.get_current_repo_settings()
+        _run_script(settings["run"])
+    else:
+        _run_conductor_script("run")
+
+
+def cmd_create_icon(args: argparse.Namespace) -> None:
+    repo_name = args.repo
+    if not repo_name:
+        ensure_git_repo()
+        repo_name = config.get_repo_name()
+        if not repo_name:
+            die("could not detect repository — use --repo")
+
+    api_key = os.environ.get("LM_OPENAI_API_KEY")
+    if not api_key:
+        if os.environ.get("LM_PROVIDER", "").lower() == "openai":
+            api_key = os.environ.get("LM_API_KEY")
+    if not api_key:
+        die("set LM_OPENAI_API_KEY for image generation")
+
+    prompt = (
+        f"Create a simple, clean icon suitable for a terminal tab. "
+        f"Must be recognizable at 32x32 pixels. "
+        f"Description: {args.description}"
+    )
+
+    from lm.llm import generate_image
+
+    print(f"generating icon for {repo_name}…", file=sys.stderr)
+    png_data = generate_image(
+        prompt, api_key, model=args.model, size=args.size, quality=args.quality
+    )
+    if not png_data:
+        die("image generation failed")
+
+    icon_path = config.get_icon_path(repo_name)
+    os.makedirs(os.path.dirname(icon_path), exist_ok=True)
+    with open(icon_path, "wb") as f:
+        f.write(png_data)
+
+    subprocess.run(
+        ["sips", "-z", "64", "64", icon_path],
+        capture_output=True,
+        check=False,
+    )
+
+    print(f"icon saved: {icon_path}", file=sys.stderr)
+
+
+def cmd_config(args: argparse.Namespace) -> None:
+    if args.show:
+        settings = config.get_current_repo_settings()
+        if settings:
+            print(yaml.safe_dump(settings, default_flow_style=False))
+        else:
+            print("No config found for current repository")
+        return
+
+    repo_name = config.get_repo_name()
+    if repo_name is None:
+        die("Could not detect repository name from git origin")
+
+    config.ensure_config_exists()
+    config.ensure_repo_in_config(repo_name)
+    config.edit_config()
+
+    warnings = config.validate_config()
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        prog="lm",
+        description="Manage git worktrees with iTerm2 multi-pane layouts.",
+    )
+    subs = parser.add_subparsers(dest="command")
+
+    p_new = subs.add_parser(
+        "new", aliases=ALIASES["new"], help="Create a worktree and open iTerm2 layout"
+    )
+    p_new.add_argument("--branch", "-b", help="Explicit branch name (default: random)")
+    p_new.add_argument(
+        "--base", help="Base ref for the new branch (default: origin's default branch)"
+    )
+
+    p_warp = subs.add_parser(
+        "warp", aliases=ALIASES["warp"], help="Create a worktree for an existing branch"
+    )
+    p_warp.add_argument("branch", help="Name of the existing branch to check out")
+
+    p_restore = subs.add_parser(
+        "restore",
+        aliases=ALIASES["restore"],
+        help="Restore a closed worktree layout with --continue",
+    )
+    p_restore.add_argument("target", help="Branch name, short name, or dirname to restore")
+
+    p_destroy = subs.add_parser(
+        "destroy", aliases=ALIASES["destroy"], help="Remove a worktree and its branch"
+    )
+    p_destroy.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Branch name, short name, or dirname (auto-detected inside a worktree)",
+    )
+    p_destroy.add_argument(
+        "--force", "-f", action="store_true", help="Destroy even if status is not done"
+    )
+
+    p_rename = subs.add_parser(
+        "rename",
+        aliases=ALIASES["rename"],
+        help="Rename current worktree branch using AI-generated name",
+    )
+    p_rename.add_argument("--name", "-n", help="Explicit new branch name (skip AI generation)")
+
+    subs.add_parser("list", aliases=ALIASES["list"], help="List worktrees under ~/.worktrees/")
+
+    p_status = subs.add_parser(
+        "status", aliases=ALIASES["status"], help="Show or set worktree status"
+    )
+    p_status.add_argument(
+        "status", nargs="?", default=None, help="Status to set (name, letter, or prefix)"
+    )
+
+    p_pull = subs.add_parser(
+        "pull", aliases=ALIASES["pull"], help="Update worktree statuses from GitHub PR state"
+    )
+    p_pull.add_argument(
+        "--watch", "-w", action="store_true", help="Re-pull every 60 seconds in a loop"
+    )
+
+    subs.add_parser(
+        "open",
+        aliases=ALIASES["open"],
+        help="Open localhost:<port> for this worktree in the browser",
+    )
+
+    subs.add_parser("pr", help="Create a pull request using the coding agent")
+
+    subs.add_parser(
+        "setup", aliases=ALIASES["setup"], help="Run the setup script from conductor.json"
+    )
+    subs.add_parser("run", aliases=ALIASES["run"], help="Run the run script from conductor.json")
+
+    p_config = subs.add_parser(
+        "config", aliases=ALIASES["config"], help="Edit or show lm configuration"
+    )
+    p_config.add_argument("--show", action="store_true", help="Show config for current repository")
+
+    p_create_icon = subs.add_parser(
+        "create-icon", help="Generate an AI icon for the current repository"
+    )
+    p_create_icon.add_argument(
+        "--description", "-d", required=True, help="Description of the icon to generate"
+    )
+    p_create_icon.add_argument(
+        "--repo", "-r", help="Repository name (default: auto-detect from git origin)"
+    )
+    p_create_icon.add_argument(
+        "--model", "-m", default="gpt-image-1", help="Image generation model (default: gpt-image-1)"
+    )
+    p_create_icon.add_argument(
+        "--size", "-s", default="1024x1024", help="Generation size (default: 1024x1024)"
+    )
+    p_create_icon.add_argument(
+        "--quality", "-q", default="low", help="Image quality (default: low)"
+    )
+
+    args = parser.parse_args()
+
+    if args.command is None:
+        parser.print_help()
+        sys.exit(1)
+
+    dispatch = {
+        "new": cmd_new,
+        "warp": cmd_warp,
+        "restore": cmd_restore,
+        "destroy": cmd_destroy,
+        "rename": cmd_rename,
+        "list": cmd_list,
+        "status": cmd_status,
+        "pull": cmd_pull,
+        "open": cmd_open,
+        "pr": cmd_pr,
+        "setup": cmd_setup,
+        "run": cmd_run,
+        "config": cmd_config,
+        "create-icon": cmd_create_icon,
+    }
+    for cmd_name, alias_list in ALIASES.items():
+        for alias in alias_list:
+            dispatch[alias] = dispatch[cmd_name]
+    dispatch[args.command](args)
+
+
+if __name__ == "__main__":
+    main()
