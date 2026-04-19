@@ -445,7 +445,7 @@ def fetch_pr_data(branch: str, repo_root: str) -> dict | None:
                 "--state",
                 "all",
                 "--json",
-                "state,isDraft,mergeable,reviewRequests,reviews,reviewDecision,statusCheckRollup",
+                "state,isDraft,mergeable,reviewRequests,reviews,reviewDecision,statusCheckRollup,url",
                 "--limit",
                 "1",
             ],
@@ -1240,11 +1240,13 @@ def _pull_once(wt_path: str, repo_root: str) -> None:
     pr_data = fetch_pr_data(branch, repo_root)
     new_status = determine_status_from_pr(pr_data)
 
+    pr_url = pr_data.get("url") if pr_data else None
+
     if new_status != old_status:
         write_status(wt_path, new_status)
-        print(f"{branch}: {old_status} → {new_status}")
+        print(f"{branch}: {old_status} → {new_status}" + (f" {pr_url}" if pr_url else ""))
     else:
-        print(f"{branch}: {old_status} (unchanged)")
+        print(f"{branch}: {old_status} (unchanged)" + (f" {pr_url}" if pr_url else ""))
 
     if terminal.is_available():
         pane_title = make_pane_label(repo_root, branch, status=new_status)
