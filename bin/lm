@@ -635,54 +635,6 @@ def fetch_remote_branch(branch: str) -> bool:
         return False
 
 
-def _try_hardlink(src: str, dst: str) -> bool:
-    """Try to create a hardlink; return True on success, False on failure."""
-    try:
-        os.link(src, dst)
-        return True
-    except OSError:
-        return False
-
-
-def _hardlink_tree(src: str, dst: str) -> bool:
-    """Recursively hardlink directory tree; return True on success, False."""
-    try:
-        os.makedirs(dst, exist_ok=True)
-        for root, dirs, files in os.walk(src):
-            rel_root = os.path.relpath(root, src)
-            dst_root = dst if rel_root == "." else os.path.join(dst, rel_root)
-            for d in dirs:
-                os.makedirs(os.path.join(dst_root, d), exist_ok=True)
-            for f in files:
-                src_path = os.path.join(root, f)
-                dst_path = os.path.join(dst_root, f)
-                try:
-                    os.link(src_path, dst_path)
-                except OSError:
-                    return False
-        return True
-    except OSError:
-        return False
-
-
-def _copy_with_hybrid(src: str, dst: str, is_dir: bool) -> None:
-    """Copy file/dir with hybrid strategy: reflink → hardlink → copy."""
-    if is_dir:
-        result = subprocess.run(
-            ["cp", "--reflink=always", "-r", src, dst],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            _hardlink_tree(src, dst) or shutil.copytree(src, dst)
-    else:
-        result = subprocess.run(
-            ["cp", "--reflink=always", src, dst],
-            capture_output=True,
-        )
-        if result.returncode != 0:
-            _try_hardlink(src, dst) or shutil.copy2(src, dst)
-
-
 def create_worktree(
     wt_path: str, branch: str, base: str | None = None, *, new_branch: bool = True
 ) -> None:
@@ -870,10 +822,13 @@ def cmd_new(args: argparse.Namespace) -> None:
     for item in copy_items:
         src = os.path.join(repo_root, item)
         dst = os.path.join(wt_path, item)
-        if not os.path.exists(src):
+        if os.path.exists(src):
+            if os.path.isdir(src):
+                shutil.copytree(src, dst)
+            else:
+                shutil.copy2(src, dst)
+        else:
             print(f"warning: '{item}' not found in repo root, skipping", file=sys.stderr)
-            continue
-        _copy_with_hybrid(src, dst, os.path.isdir(src))
 
     pane_title = make_pane_label(repo_root, branch, status=DEFAULT_STATUS)
     tab_color = TAB_COLORS[STATUSES[DEFAULT_STATUS]["color"]]
