@@ -580,10 +580,11 @@ def branch_exists(name: str) -> bool:
 def detect_remote_default_branch() -> str | None:
     """Detect the remote's default branch (e.g. main or master).
 
-    Three-tier detection:
+    Four-tier detection:
     1. git symbolic-ref refs/remotes/origin/HEAD (canonical)
     2. Check if origin/main exists
     3. Check if origin/master exists
+    4. Check local master/main as fallback
     """
     try:
         ref = run_git("symbolic-ref", "refs/remotes/origin/HEAD")
@@ -602,6 +603,18 @@ def detect_remote_default_branch() -> str | None:
     try:
         run_git("rev-parse", "--verify", "origin/master")
         return "master"
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        run_git("rev-parse", "--verify", "refs/heads/master")
+        return "master"
+    except subprocess.CalledProcessError:
+        pass
+
+    try:
+        run_git("rev-parse", "--verify", "refs/heads/main")
+        return "main"
     except subprocess.CalledProcessError:
         pass
 
@@ -698,7 +711,7 @@ def is_inside_worktree() -> bool:
 
 
 def get_main_branch() -> str:
-    """Detect the main branch (main or master) from the remote."""
+    """Detect the main branch (main or master) from the remote or local."""
     try:
         ref = run_git("symbolic-ref", "refs/remotes/origin/HEAD")
         return ref.removeprefix("refs/remotes/origin/")
@@ -712,6 +725,16 @@ def get_main_branch() -> str:
     try:
         run_git("rev-parse", "--verify", "origin/master")
         return "master"
+    except subprocess.CalledProcessError:
+        pass
+    try:
+        run_git("rev-parse", "--verify", "refs/heads/master")
+        return "master"
+    except subprocess.CalledProcessError:
+        pass
+    try:
+        run_git("rev-parse", "--verify", "refs/heads/main")
+        return "main"
     except subprocess.CalledProcessError:
         pass
     die("could not determine main branch")
