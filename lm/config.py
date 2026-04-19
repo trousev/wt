@@ -135,7 +135,7 @@ def get_repo_settings(repo_name: str | None = None) -> dict:
     }
 
     for key, default_value in defaults.items():
-        if key not in repo_config:
+        if key not in repo_config or repo_config.get(key) is None:
             repo_config[key] = default_value
         elif key in ("run", "setup") and repo_config[key] is not None:
             repo_config[key] = normalize_script(repo_config[key])
