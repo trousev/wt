@@ -8,6 +8,9 @@ import yaml
 CONFIG_PATH = os.path.expanduser("~/.lm.yaml")
 ICON_DIR = os.path.expanduser("~/.lm-icons")
 REPO_REQUIRED_KEYS = ("run", "setup", "copy")
+GENERAL_KEYS = ("coding_agent", "provider", "model", "api_key", "ollama_url")
+CODING_AGENT_DEFAULT = "claude"
+PROVIDER_DEFAULT = "anthropic"
 
 
 def get_icon_path(repo_name: str) -> str:
@@ -93,9 +96,26 @@ def load_config() -> dict:
 
 
 def save_config(config: dict) -> None:
-    """Save config to YAML file."""
+    """Save config to YAML file. Puts 'general' section first with delimiter."""
+    orig_config = load_config()
+    merged = orig_config.copy() if orig_config else {}
+    merged.update(config)
+
+    lines = []
+    general = merged.get("general", {})
+    lines.append("# --- general settings ---")
+    lines.append(yaml.safe_dump({"general": general}, default_flow_style=False).rstrip())
+
+    for key, value in merged.items():
+        if key == "general":
+            continue
+        if isinstance(value, dict):
+            if value:
+                lines.append(f"\n# --- {key} ---")
+                lines.append(yaml.safe_dump({key: value}, default_flow_style=False).rstrip())
+
     with open(_get_config_path(), "w") as f:
-        yaml.safe_dump(config, f, default_flow_style=False, sort_keys=False)
+        f.write("\n\n".join(lines) + "\n")
 
 
 def ensure_config_exists() -> None:
@@ -164,6 +184,62 @@ def edit_config() -> None:
     """Open config file in editor."""
     editor = os.environ.get("EDITOR", "vim")
     os.execvp(editor, [editor, _get_config_path()])
+
+
+def get_general_settings() -> dict:
+    """Get general settings from config. Merges with env vars as fallback."""
+    config = load_config()
+    general_config = config.get("general", {})
+
+    defaults = {
+        "coding_agent": os.environ.get("LM_CODING_AGENT", CODING_AGENT_DEFAULT),
+        "provider": os.environ.get("LM_PROVIDER", PROVIDER_DEFAULT),
+        "model": os.environ.get("LM_MODEL"),
+        "api_key": os.environ.get("LM_API_KEY"),
+        "ollama_url": os.environ.get("LM_OLLAMA_URL", "http://localhost:11434"),
+    }
+
+    for key, default_value in defaults.items():
+        if key not in general_config or general_config.get(key) is None:
+            general_config[key] = default_value
+
+    return general_config
+
+
+def get_general_setting(key: str) -> str | None:
+    """Get a specific general setting. Checks config first, then falls back to env var."""
+    settings = get_general_settings()
+    value = settings.get(key)
+    if value is not None:
+        return value
+    env_key = f"LM_{key.upper()}"
+    return os.environ.get(env_key)
+
+
+def ensure_general_in_config() -> None:
+    """Ensure general section exists with all keys present."""
+    config = load_config()
+
+    if "general" not in config:
+        config["general"] = {}
+
+    general_config = config["general"]
+
+    all_keys = ["coding_agent", "provider", "model", "api_key", "ollama_url"]
+    for key in all_keys:
+        if key not in general_config:
+            env_key = f"LM_{key.upper()}"
+            if key == "coding_agent":
+                general_config[key] = os.environ.get("LM_CODING_AGENT", CODING_AGENT_DEFAULT)
+            elif key == "provider":
+                general_config[key] = os.environ.get("LM_PROVIDER", PROVIDER_DEFAULT)
+            elif key == "ollama_url":
+                general_config[key] = os.environ.get("LM_OLLAMA_URL", "http://localhost:11434")
+            else:
+                general_config[key] = os.environ.get(env_key)
+
+    config["general"] = general_config
+    save_config(config)
 
 
 def validate_config() -> list[str]:
