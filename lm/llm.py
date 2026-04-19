@@ -6,6 +6,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from lm.config import get_general_setting
+
 DEFAULT_MODELS = {
     "anthropic": "claude-sonnet-4-5",
     "openai": "gpt-4o",
@@ -22,7 +24,8 @@ PROVIDER_URLS = {
 
 
 def get_provider():
-    provider = os.environ.get("LM_PROVIDER", "anthropic").lower()
+    config_value = get_general_setting("provider")
+    provider = (config_value or os.environ.get("LM_PROVIDER", "anthropic")).lower()
     if provider not in DEFAULT_MODELS:
         print(
             f'Error: Unknown provider "{provider}". Must be one of: {", ".join(DEFAULT_MODELS.keys())}',
@@ -33,14 +36,16 @@ def get_provider():
 
 
 def get_model(provider):
-    model = os.environ.get("LM_MODEL")
+    config_value = get_general_setting("model")
+    model = config_value or os.environ.get("LM_MODEL")
     if not model:
         model = DEFAULT_MODELS.get(provider, "llama3")
     return model
 
 
 def get_api_key(provider):
-    api_key = os.environ.get("LM_API_KEY")
+    config_value = get_general_setting("api_key")
+    api_key = config_value or os.environ.get("LM_API_KEY")
     if not api_key:
         print("Error: LM_API_KEY environment variable not set", file=sys.stderr)
         sys.exit(1)
@@ -48,7 +53,8 @@ def get_api_key(provider):
 
 
 def get_ollama_url():
-    return os.environ.get("LM_OLLAMA_URL", "http://localhost:11434")
+    config_value = get_general_setting("ollama_url")
+    return config_value or os.environ.get("LM_OLLAMA_URL", "http://localhost:11434")
 
 
 def call_llm_api(prompt, system_prompt=None, model=None):

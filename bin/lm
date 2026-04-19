@@ -1403,16 +1403,30 @@ def cmd_create_icon(args: argparse.Namespace) -> None:
 
 def cmd_config(args: argparse.Namespace) -> None:
     if args.show:
-        settings = config.get_current_repo_settings()
-        if settings:
+        if args.general:
+            config.ensure_general_in_config()
+            settings = config.get_general_settings()
             print(yaml.safe_dump(settings, default_flow_style=False))
         else:
-            print("No config found for current repository")
+            settings = config.get_current_repo_settings()
+            if settings:
+                print(yaml.safe_dump(settings, default_flow_style=False))
+            else:
+                print("No config found for current repository")
         return
+
+    if args.general:
+        config.ensure_general_in_config()
+        config.edit_config()
+        return
+
+    config.ensure_general_in_config()
 
     repo_name = config.get_repo_name()
     if repo_name is None:
-        die("Could not detect repository name from git origin")
+        print("No repository detected. Creating general config instead.", file=sys.stderr)
+        config.edit_config()
+        return
 
     config.ensure_config_exists()
     config.ensure_repo_in_config(repo_name)
@@ -1503,6 +1517,7 @@ def main() -> None:
         "config", aliases=ALIASES["config"], help="Edit or show lm configuration"
     )
     p_config.add_argument("--show", action="store_true", help="Show config for current repository")
+    p_config.add_argument("--general", action="store_true", help="Show or edit general settings")
 
     p_create_icon = subs.add_parser(
         "create-icon", help="Generate an AI icon for the current repository"

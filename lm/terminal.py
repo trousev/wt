@@ -5,6 +5,8 @@ import os
 import shutil
 import subprocess
 
+from lm.config import get_general_setting
+
 TAB_COLORS = {
     "yellow": (181, 137, 0),
     "orange": (203, 75, 22),
@@ -26,7 +28,10 @@ TAB_COLORS = {
 
 
 def _get_coding_agent() -> str:
-    """Return the coding agent to launch. Uses LM_CODING_AGENT env var if set, otherwise defaults to 'claude'."""
+    """Return the coding agent to launch. Checks config first, then env var, then defaults."""
+    config_value = get_general_setting("coding_agent")
+    if config_value:
+        return config_value
     return os.environ.get("LM_CODING_AGENT", "claude")
 
 
