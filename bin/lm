@@ -1122,11 +1122,18 @@ def cmd_rename(args: argparse.Namespace) -> None:
         if not diff:
             die("no changes vs main — nothing to name")
 
-        from lm.llm import call_llm_api
+        from lm import agentic
 
-        result = call_llm_api(diff, BRANCH_NAME_SYSTEM_PROMPT)
+        prompt = f"""{BRANCH_NAME_SYSTEM_PROMPT}
+
+The diff to analyze:
+```
+{diff}
+```"""
+
+        result = agentic.run_agent(prompt)
         if not result or not result.strip():
-            die("LLM returned empty result")
+            die("Agent returned empty result")
 
         import re
 
@@ -1135,7 +1142,7 @@ def cmd_rename(args: argparse.Namespace) -> None:
         new_branch = re.sub(r"-+", "-", new_branch).strip("-").lower()
 
         if not new_branch:
-            die("LLM returned an invalid branch name")
+            die("Agent returned an invalid branch name")
 
     if branch_exists(new_branch):
         die(f"branch '{new_branch}' already exists — use --name to pick a different name")
@@ -1317,11 +1324,7 @@ def cmd_pr(args: argparse.Namespace) -> None:
         print(f"on placeholder branch '{branch}', renaming first…", file=sys.stderr)
         cmd_rename(argparse.Namespace(name=None))
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    agentic_path = os.path.join(script_dir, "agentic")
-
-    if not os.path.isfile(agentic_path):
-        die(f"agentic script not found at {agentic_path}")
+    from lm import agentic
 
     prompt = (
         "You are in a git worktree. Create a pull request for the current branch.\n"
@@ -1336,7 +1339,7 @@ def cmd_pr(args: argparse.Namespace) -> None:
         "If a PR already exists, just open it with `gh pr view --web`."
     )
 
-    os.execv(agentic_path, [agentic_path, prompt])
+    agentic.run_agent(prompt)
 
 
 def cmd_setup(_args: argparse.Namespace) -> None:
