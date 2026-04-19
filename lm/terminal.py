@@ -29,6 +29,7 @@ TAB_COLORS = {
 
 def _get_coding_agent() -> str:
     """Return the coding agent to launch. Checks config first, then env var, then defaults."""
+    from lm.config import get_general_setting
     config_value = get_general_setting("coding_agent")
     if config_value:
         return config_value
