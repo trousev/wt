@@ -1242,11 +1242,16 @@ def _pull_once(wt_path: str, repo_root: str) -> None:
 
     pr_url = pr_data.get("url") if pr_data else None
 
+    def _make_hyperlink(url: str, text: str) -> str:
+        return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+
+    url_display = f" {_make_hyperlink(pr_url, pr_url)}" if pr_url else ""
+
     if new_status != old_status:
         write_status(wt_path, new_status)
-        print(f"{branch}: {old_status} → {new_status}" + (f" {pr_url}" if pr_url else ""))
+        print(f"{branch}: {old_status} → {new_status}{url_display}")
     else:
-        print(f"{branch}: {old_status} (unchanged)" + (f" {pr_url}" if pr_url else ""))
+        print(f"{branch}: {old_status} (unchanged){url_display}")
 
     if terminal.is_available():
         pane_title = make_pane_label(repo_root, branch, status=new_status)
