@@ -329,7 +329,7 @@ def _run_conductor_script(script_name: str) -> None:
     conductor_path = os.path.join(repo_root, "conductor.json")
 
     if not os.path.isfile(conductor_path):
-        die("conductor.json not found in repository root")
+        die("conductor.json not found in repository root — use 'lm config' to configure setup/run scripts instead")
 
     with open(conductor_path) as f:
         conductor = json.load(f)
