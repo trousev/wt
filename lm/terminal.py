@@ -466,13 +466,13 @@ tell application "Ghostty"
     set s2 to split s0 direction right with configuration cfg2
     set cfg3 to new surface configuration
     set initial working directory of cfg3 to "{wtp}"
-    set initial input of cfg3 to ("lm setup" & return)
     set s3 to split s1 direction right with configuration cfg3
     set cfg4 to new surface configuration
     set initial working directory of cfg4 to "{wtp}"
-    set initial input of cfg4 to ("lm pull --watch" & return)
     set s4 to split s3 direction right with configuration cfg4
     input text ("cd {wtp} && {agent_esc}" & return) to s0
+    input text ("lm setup" & return) to s3
+    input text ("lm pull --watch" & return) to s4
     perform action "set_tab_title:{title_esc}" on s0
     return id of tabRef as text
 end tell"""
@@ -545,7 +545,7 @@ def _ghostty_build_generic_layout(
             cmd_lines.append(
                 f'    input text ("{_ghostty_escape(cmd)}" & return) to {var}'
             )
-        elif effective_cwd and var == "s0":
+        elif effective_cwd:
             cmd_lines.append(
                 f'    input text ("cd {_ghostty_escape(effective_cwd)}" & return) to {var}'
             )
@@ -579,11 +579,12 @@ def _ghostty_update_tab_status(
     if not session_id:
         return
     title_esc = _ghostty_escape(pane_title)
+    sid_esc = _ghostty_escape(session_id)
     script = f"""\
 tell application "Ghostty"
     repeat with w in every window
         repeat with t in every tab of w
-            if (id of t as text) is "{session_id}" then
+            if (id of t as text) is "{sid_esc}" then
                 perform action "set_tab_title:{title_esc}" on (focused terminal of t)
                 return
             end if
@@ -617,7 +618,7 @@ def _ghostty_kill_worktree_panes(wt_path: str) -> None:
     if not pane_info or "tab_id" not in pane_info:
         return
 
-    tab_id = pane_info["tab_id"]
+    tab_id = _ghostty_escape(pane_info["tab_id"])
     script = f"""\
 tell application "Ghostty"
     repeat with w in every window
