@@ -597,24 +597,7 @@ end tell"""
 
 
 def _ghostty_rename_pane_titles(new_title: str, session_id: str | None = None) -> None:
-    if not session_id:
-        return
-    title_esc = _ghostty_escape(new_title)
-    script = f"""\
-tell application "Ghostty"
-    repeat with w in every window
-        repeat with t in every tab of w
-            if (id of t as text) is "{session_id}" then
-                perform action "set_tab_title:{title_esc}" on (focused terminal of t)
-                return
-            end if
-        end repeat
-    end repeat
-end tell"""
-    try:
-        _ghostty_run_applescript(script)
-    except RuntimeError:
-        pass
+    _ghostty_update_tab_status(new_title, (0, 0, 0), session_id=session_id)
 
 
 def _ghostty_close_current_tab() -> None:
