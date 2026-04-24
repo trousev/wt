@@ -673,8 +673,23 @@ _BACKENDS = {
 }
 
 
+_TERM_PROGRAM_MAP = {
+    "iTerm.app": "iterm2",
+    "WezTerm": "wezterm",
+}
+
+
 def _get_backend() -> str | None:
-    """Detect the first available terminal backend."""
+    """Detect the active terminal backend.
+
+    Checks TERM_PROGRAM first to prefer the terminal we're actually running
+    inside, then falls back to the first installed backend.
+    """
+    term = os.environ.get("TERM_PROGRAM", "")
+    preferred = _TERM_PROGRAM_MAP.get(term)
+    if preferred and preferred in _BACKENDS and _BACKENDS[preferred]["is_available"]():
+        return preferred
+
     for name, funcs in _BACKENDS.items():
         if funcs["is_available"]():
             return name
