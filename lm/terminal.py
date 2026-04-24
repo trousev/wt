@@ -413,6 +413,230 @@ def _wezterm_kill_worktree_panes(wt_path: str) -> None:
     _remove_pane_info(wt_path)
 
 
+# --- Ghostty backend (macOS only, requires Ghostty 1.3+ for AppleScript) ---
+
+
+def _ghostty_is_available() -> bool:
+    return shutil.which("ghostty") is not None and shutil.which("osascript") is not None
+
+
+def _ghostty_escape(s: str) -> str:
+    """Escape a string for AppleScript double-quoted literals."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _ghostty_run_applescript(script: str) -> str:
+    """Run an AppleScript via osascript and return stdout."""
+    result = subprocess.run(
+        ["osascript"],
+        input=script,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit code {result.returncode}"
+        raise RuntimeError(detail)
+    return result.stdout.strip()
+
+
+def _ghostty_build_layout(
+    wt_path: str,
+    pane_title: str,
+    tab_color: tuple[int, int, int] | None = None,
+    first_pane_command: str | None = None,
+    icon_path: str | None = None,
+) -> str:
+    agent = first_pane_command if first_pane_command else _get_coding_agent()
+    wtp = _ghostty_escape(wt_path)
+    agent_esc = _ghostty_escape(agent)
+    title_esc = _ghostty_escape(pane_title)
+
+    script = f"""\
+tell application "Ghostty"
+    set win to front window
+    perform action "new_tab" on (focused terminal of selected tab of win)
+    delay 0.5
+    set s0 to focused terminal of selected tab of win
+    set tabRef to selected tab of win
+    set cfg1 to new surface configuration
+    set initial working directory of cfg1 to "{wtp}"
+    set s1 to split s0 direction down with configuration cfg1
+    set cfg2 to new surface configuration
+    set initial working directory of cfg2 to "{wtp}"
+    set s2 to split s0 direction right with configuration cfg2
+    set cfg3 to new surface configuration
+    set initial working directory of cfg3 to "{wtp}"
+    set s3 to split s1 direction right with configuration cfg3
+    set cfg4 to new surface configuration
+    set initial working directory of cfg4 to "{wtp}"
+    set s4 to split s3 direction right with configuration cfg4
+    input text ("cd {wtp} && {agent_esc}" & return) to s0
+    input text ("lm setup" & return) to s3
+    input text ("lm pull --watch" & return) to s4
+    perform action "set_tab_title:{title_esc}" on s0
+    return id of tabRef as text
+end tell"""
+
+    tab_id = _ghostty_run_applescript(script)
+    _save_pane_info(wt_path, {}, tab_id)
+    return tab_id
+
+
+def _ghostty_build_generic_layout(
+    tree: dict,
+    default_cwd: str | None = None,
+    title: str | None = None,
+    tab_color: tuple[int, int, int] | None = None,
+) -> None:
+    counter = [1]
+    split_lines: list[str] = []
+    leaves: list[tuple[str, str | None, str | None]] = []
+
+    def next_var() -> str:
+        name = f"s{counter[0]}"
+        counter[0] += 1
+        return name
+
+    def walk(node: dict, var: str) -> None:
+        if "split" not in node:
+            leaves.append((var, node.get("command"), node.get("cwd")))
+            return
+
+        children = node["children"]
+        sizes = node["sizes"]
+        direction = "right" if node["split"] == "cols" else "down"
+
+        if len(children) == 1:
+            walk(children[0], var)
+            return
+
+        new_var = next_var()
+        cwd_esc = _ghostty_escape(default_cwd) if default_cwd else None
+
+        split_lines.append(f"    set cfg_{new_var} to new surface configuration")
+        if cwd_esc:
+            split_lines.append(
+                f'    set initial working directory of cfg_{new_var} to "{cwd_esc}"'
+            )
+        split_lines.append(
+            f"    set {new_var} to split {var} direction {direction}"
+            f" with configuration cfg_{new_var}"
+        )
+
+        walk(children[0], var)
+
+        if len(children) == 2:
+            walk(children[1], new_var)
+        else:
+            walk(
+                {"split": node["split"], "sizes": sizes[1:], "children": children[1:]},
+                new_var,
+            )
+
+    walk(tree, "s0")
+
+    cmd_lines: list[str] = []
+    for var, cmd, cwd in leaves:
+        effective_cwd = cwd or default_cwd
+        if cmd and effective_cwd:
+            text = f"cd {_ghostty_escape(effective_cwd)} && {_ghostty_escape(cmd)}"
+            cmd_lines.append(f'    input text ("{text}" & return) to {var}')
+        elif cmd:
+            cmd_lines.append(
+                f'    input text ("{_ghostty_escape(cmd)}" & return) to {var}'
+            )
+        elif effective_cwd:
+            cmd_lines.append(
+                f'    input text ("cd {_ghostty_escape(effective_cwd)}" & return) to {var}'
+            )
+
+    script_parts = [
+        'tell application "Ghostty"',
+        "    set win to front window",
+        '    perform action "new_tab" on (focused terminal of selected tab of win)',
+        "    delay 0.5",
+        "    set s0 to focused terminal of selected tab of win",
+        "    set tabRef to selected tab of win",
+    ]
+    script_parts.extend(split_lines)
+    script_parts.extend(cmd_lines)
+
+    if title:
+        script_parts.append(
+            f'    perform action "set_tab_title:{_ghostty_escape(title)}" on s0'
+        )
+
+    script_parts.append("end tell")
+    _ghostty_run_applescript("\n".join(script_parts))
+
+
+def _ghostty_update_tab_status(
+    pane_title: str,
+    tab_color: tuple[int, int, int],
+    session_id: str | None = None,
+    icon_path: str | None = None,
+) -> None:
+    if not session_id:
+        return
+    title_esc = _ghostty_escape(pane_title)
+    sid_esc = _ghostty_escape(session_id)
+    script = f"""\
+tell application "Ghostty"
+    repeat with w in every window
+        repeat with t in every tab of w
+            if (id of t as text) is "{sid_esc}" then
+                perform action "set_tab_title:{title_esc}" on (focused terminal of t)
+                return
+            end if
+        end repeat
+    end repeat
+end tell"""
+    try:
+        _ghostty_run_applescript(script)
+    except RuntimeError:
+        pass
+
+
+def _ghostty_rename_pane_titles(new_title: str, session_id: str | None = None) -> None:
+    _ghostty_update_tab_status(new_title, (0, 0, 0), session_id=session_id)
+
+
+def _ghostty_close_current_tab() -> None:
+    script = """\
+tell application "Ghostty"
+    perform action "close_tab" on (focused terminal of selected tab of front window)
+end tell"""
+    try:
+        _ghostty_run_applescript(script)
+    except RuntimeError:
+        pass
+
+
+def _ghostty_kill_worktree_panes(wt_path: str) -> None:
+    """Ghostty: close the tab containing the worktree's panes."""
+    pane_info = _load_pane_info(wt_path)
+    if not pane_info or "tab_id" not in pane_info:
+        return
+
+    tab_id = _ghostty_escape(pane_info["tab_id"])
+    script = f"""\
+tell application "Ghostty"
+    repeat with w in every window
+        repeat with t in every tab of w
+            if (id of t as text) is "{tab_id}" then
+                perform action "close_tab" on (focused terminal of t)
+                return
+            end if
+        end repeat
+    end repeat
+end tell"""
+    try:
+        _ghostty_run_applescript(script)
+    except RuntimeError:
+        pass
+    _remove_pane_info(wt_path)
+
+
 def _iterm2_kill_worktree_panes(wt_path: str) -> None:
     """iTerm2: close the tab containing the worktree's panes."""
     pane_info = _load_pane_info(wt_path)
@@ -669,6 +893,15 @@ _BACKENDS = {
         "rename_pane_titles": _wezterm_rename_pane_titles,
         "close_current_tab": _wezterm_close_current_tab,
         "kill_worktree_panes": _wezterm_kill_worktree_panes,
+    },
+    "ghostty": {
+        "is_available": _ghostty_is_available,
+        "build_layout": _ghostty_build_layout,
+        "build_generic_layout": _ghostty_build_generic_layout,
+        "update_tab_status": _ghostty_update_tab_status,
+        "rename_pane_titles": _ghostty_rename_pane_titles,
+        "close_current_tab": _ghostty_close_current_tab,
+        "kill_worktree_panes": _ghostty_kill_worktree_panes,
     },
 }
 
