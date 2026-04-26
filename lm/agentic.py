@@ -26,7 +26,7 @@ def run_agent(prompt: str, agent: str | None = None, verbose: bool = False) -> s
     elif agent == "codex":
         return _run_codex(prompt)
     elif agent == "opencode":
-        return _run_opencode(prompt)
+        return _run_opencode(prompt, verbose)
     
     print(f"error: unsupported agent '{agent}'", file=sys.stderr)
     print("Supported: claude, codex, opencode. Set SHORTCUTS_CODING_AGENT.", file=sys.stderr)
@@ -125,10 +125,32 @@ def _run_codex(prompt: str) -> str | None:
     return None
 
 
-def _run_opencode(prompt: str) -> str | None:
-    """Run opencode in unattended mode."""
+def _run_opencode(prompt: str, verbose: bool = False) -> str | None:
+    """Run opencode in unattended mode and return the branch name from its output."""
     try:
-        os.execvp("opencode", ["opencode", "run", prompt])
+        proc = subprocess.Popen(
+            ["opencode", "run", prompt],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        output_lines = []
+        for line in proc.stdout:
+            if verbose:
+                print(line, end="", file=sys.stderr)
+            output_lines.append(line)
+
+        proc.wait()
+
+        if proc.returncode != 0:
+            print(f"error: opencode failed with return code {proc.returncode}", file=sys.stderr)
+            return None
+
+        full_output = "".join(output_lines).strip()
+        if not full_output:
+            return None
+        return full_output
     except FileNotFoundError:
         print("error: opencode not found", file=sys.stderr)
-    return None
+        return None
