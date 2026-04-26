@@ -252,7 +252,7 @@ Examples of good branch names:
 - remove-deprecated-config
 - refactor-payment-flow
 
-Only return the branch name, nothing else. No explanations, no quotes, just the branch name."""
+Output your result as JSON with a "branch_name" key, nothing else. Example: {"branch_name": "my-branch-name"}"""
 
 STATUSES = {
     "working": {"letter": "W", "color": "yellow"},
@@ -1151,9 +1151,15 @@ The diff to analyze:
         if not result or not result.strip():
             die("Agent returned empty result")
 
+        import json
         import re
 
-        new_branch = result.strip().strip('"').strip("'")
+        try:
+            data = json.loads(result)
+            new_branch = data.get("branch_name", "").strip()
+        except json.JSONDecodeError:
+            new_branch = result.strip().strip('"').strip("'")
+
         new_branch = re.sub(r"[^a-zA-Z0-9-]", "-", new_branch)
         new_branch = re.sub(r"-+", "-", new_branch).strip("-").lower()
 
