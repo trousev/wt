@@ -1133,43 +1133,43 @@ def cmd_rename(args: argparse.Namespace) -> None:
 
         from lm import agentic
 
-        prompt = f"""{BRANCH_NAME_SYSTEM_PROMPT}
+        prompt = f"""You are in a git worktree. Your task is to rename the current branch.
 
-The diff to analyze:
-```
-{diff}
-```"""
+Steps:
+1. Analyze the diff between HEAD and origin/{main_branch}
+2. Generate a good branch name (kebab-case, 2-4 words, descriptive)
+3. Check if a branch with that name already exists: git branch -a | grep <name>
+4. If it exists, try a different name
+5. Rename the branch: git branch -m {old_branch} <new-name>
+6. Update terminal pane title if possible (optional)
+
+IMPORTANT: Actually run git branch -m to rename the branch. Don't just suggest it."""
 
         import os
         agent_name = os.environ.get("SHORTCUTS_CODING_AGENT", "claude")
         if args.verbose:
             print(f"[lm] debug: running agent: {agent_name}")
 
-        result = agentic.run_agent(prompt, verbose=args.verbose)
-        if args.verbose:
-            print(f"[lm] debug: agent returned raw: {result!r}")
-        if not result or not result.strip():
-            die("Agent returned empty result")
+        agentic.run_agent(prompt, verbose=args.verbose)
 
-        import re
+        try:
+            new_branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+        except subprocess.CalledProcessError:
+            die("could not determine branch after rename")
 
-        new_branch = result.strip().strip('"').strip("'")
-        new_branch = re.sub(r"[^a-zA-Z0-9-]", "-", new_branch)
-        new_branch = re.sub(r"-+", "-", new_branch).strip("-").lower()
+        if new_branch == old_branch:
+            die("agent failed to rename branch")
 
         if args.verbose:
-            print(f"[lm] debug: sanitized branch name: {new_branch}")
+            print(f"[lm] debug: agent renamed to: {new_branch}")
 
-        if not new_branch:
-            die("Agent returned an invalid branch name")
-
-    if branch_exists(new_branch):
-        die(f"branch '{new_branch}' already exists — use --name to pick a different name")
-
-    try:
-        run_git("branch", "-m", old_branch, new_branch)
-    except subprocess.CalledProcessError as exc:
-        die(f"git branch -m failed: {exc}")
+    if args.name:
+        if branch_exists(new_branch):
+            die(f"branch '{new_branch}' already exists — use --name to pick a different name")
+        try:
+            run_git("branch", "-m", old_branch, new_branch)
+        except subprocess.CalledProcessError as exc:
+            die(f"git branch -m failed: {exc}")
 
     print(f"[lm] renamed branch: {old_branch} → {new_branch}")
 
@@ -1374,7 +1374,12 @@ def cmd_pr(args: argparse.Namespace) -> None:
         "If a PR already exists, just open it with `gh pr view --web`."
     )
 
-    agentic.run_agent(prompt)
+    agentic.run_agent(prompt, verbose=args.verbose if hasattr(args, 'verbose') else False)
+
+    try:
+        run_git("pr", "view", "--web", "--no-generator")
+    except subprocess.CalledProcessError:
+        print("warning: could not verify PR (may not exist)", file=sys.stderr)
 
 
 def cmd_setup(_args: argparse.Namespace) -> None:
