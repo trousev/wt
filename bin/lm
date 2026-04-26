@@ -1212,22 +1212,8 @@ def cmd_rename(args: argparse.Namespace) -> None:
         if not issue_title:
             die(f"could not fetch title from {url}")
 
-        main_branch = get_main_branch()
         if args.verbose:
-            print(f"[lm] debug: main_branch={main_branch}")
-        try:
-            merge_base = run_git("merge-base", "HEAD", f"origin/{main_branch}")
-        except subprocess.CalledProcessError:
-            die(f"could not find merge-base with origin/{main_branch}")
-        try:
-            diff = run_git("diff", merge_base)
-        except subprocess.CalledProcessError:
-            die("could not generate diff")
-        if not diff:
-            die("no changes vs main — nothing to name")
-
-        if args.verbose:
-            print(f"[lm] debug: diff length={len(diff)} chars")
+            print(f"[lm] debug: issue_title={issue_title!r}")
 
         from lm import agentic
 
@@ -1237,12 +1223,11 @@ Issue URL: {url}
 Issue title: {issue_title}
 
 Steps:
-1. Analyze the diff between HEAD and origin/{main_branch}
-2. Generate a good branch name (kebab-case, 2-4 words, descriptive) based on the issue
-3. Check if a branch with that name already exists: git branch -a | grep <name>
-4. If it exists, try a different name
-5. Rename the branch: git branch -m {old_branch} <new-name>
-6. Update terminal pane title if possible (optional)
+1. Generate a good branch name (kebab-case, 2-4 words, descriptive) based on the issue title
+2. Check if a branch with that name already exists: git branch -a | grep <name>
+3. If it exists, try a different name
+4. Rename the branch: git branch -m {old_branch} <new-name>
+5. Update terminal pane title if possible (optional)
 
 IMPORTANT: Actually run git branch -m to rename the branch. Don't just suggest it."""
 
