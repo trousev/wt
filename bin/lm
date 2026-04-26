@@ -819,6 +819,8 @@ def cmd_new(args: argparse.Namespace) -> None:
 
     settings = config.get_current_repo_settings()
     copy_items = settings.get("copy", [])
+    if isinstance(copy_items, str):
+        copy_items = [copy_items]
     for item in copy_items:
         src = os.path.join(repo_root, item)
         dst = os.path.join(wt_path, item)
@@ -1355,7 +1357,7 @@ def cmd_pr(args: argparse.Namespace) -> None:
 
     if branch.startswith("rename/"):
         print(f"on placeholder branch '{branch}', renaming first…", file=sys.stderr)
-        cmd_rename(argparse.Namespace(name=None))
+        cmd_rename(argparse.Namespace(name=None, verbose=False))
 
     from lm import agentic
 
@@ -1522,6 +1524,7 @@ def main() -> None:
         help="Rename current worktree branch using AI-generated name",
     )
     p_rename.add_argument("--name", "-n", help="Explicit new branch name (skip AI generation)")
+    p_rename.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     subs.add_parser("list", aliases=ALIASES["list"], help="List worktrees under ~/.worktrees/")
 
