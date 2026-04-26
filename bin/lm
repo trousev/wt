@@ -1109,8 +1109,12 @@ def cmd_rename(args: argparse.Namespace) -> None:
 
     if args.name:
         new_branch = args.name
+        if args.verbose:
+            print(f"[lm] debug: using explicit branch name: {new_branch}")
     else:
         main_branch = get_main_branch()
+        if args.verbose:
+            print(f"[lm] debug: main_branch={main_branch}")
         try:
             merge_base = run_git("merge-base", "HEAD", f"origin/{main_branch}")
         except subprocess.CalledProcessError:
@@ -1122,6 +1126,9 @@ def cmd_rename(args: argparse.Namespace) -> None:
         if not diff:
             die("no changes vs main — nothing to name")
 
+        if args.verbose:
+            print(f"[lm] debug: diff length={len(diff)} chars")
+
         from lm import agentic
 
         prompt = f"""{BRANCH_NAME_SYSTEM_PROMPT}
@@ -1131,7 +1138,14 @@ The diff to analyze:
 {diff}
 ```"""
 
-        result = agentic.run_agent(prompt)
+        import os
+        agent_name = os.environ.get("SHORTCUTS_CODING_AGENT", "claude")
+        if args.verbose:
+            print(f"[lm] debug: running agent: {agent_name}")
+
+        result = agentic.run_agent(prompt, verbose=args.verbose)
+        if args.verbose:
+            print(f"[lm] debug: agent returned raw: {result!r}")
         if not result or not result.strip():
             die("Agent returned empty result")
 
@@ -1140,6 +1154,9 @@ The diff to analyze:
         new_branch = result.strip().strip('"').strip("'")
         new_branch = re.sub(r"[^a-zA-Z0-9-]", "-", new_branch)
         new_branch = re.sub(r"-+", "-", new_branch).strip("-").lower()
+
+        if args.verbose:
+            print(f"[lm] debug: sanitized branch name: {new_branch}")
 
         if not new_branch:
             die("Agent returned an invalid branch name")
@@ -1152,16 +1169,27 @@ The diff to analyze:
     except subprocess.CalledProcessError as exc:
         die(f"git branch -m failed: {exc}")
 
-    print(f"{old_branch} → {new_branch}")
+    print(f"[lm] renamed branch: {old_branch} → {new_branch}")
 
     session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+    if args.verbose:
+        import os
+        print(f"[lm] debug: WEZTERM_PANE={os.environ.get('WEZTERM_PANE')!r}")
+        print(f"[lm] debug: ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID')!r}")
+        print(f"[lm] debug: session_id={session_id!r}, terminal_available={terminal.is_available()}")
+
     if session_id and terminal.is_available():
         repo_root = get_main_repo_root()
         new_title = make_pane_label(repo_root, new_branch)
         try:
             terminal.rename_pane_titles(new_title, session_id=session_id)
-        except Exception:
-            pass
+            if args.verbose:
+                print(f"[lm] debug: renamed tab title to: {new_title}")
+        except Exception as e:
+            if args.verbose:
+                print(f"[lm] debug: failed to rename tab title: {e}")
+    elif args.verbose:
+        print(f"[lm] debug: skipping tab title update (session_id={session_id!r}, terminal_available={terminal.is_available()})")
 
     try:
         upstream = run_git("for-each-ref", "--format=%(upstream:short)", f"refs/heads/{new_branch}")
@@ -1444,7 +1472,7 @@ def cmd_config(args: argparse.Namespace) -> None:
 
     warnings = config.validate_config()
     for warning in warnings:
-        print(f"warning: {warning}", file=sys.stderr)
+        print(f"warning: {warning}")
 
 
 def main() -> None:
@@ -1452,6 +1480,7 @@ def main() -> None:
         prog="lm",
         description="Manage git worktrees with iTerm2 multi-pane layouts.",
     )
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose debug output")
     subs = parser.add_subparsers(dest="command")
 
     p_new = subs.add_parser(
