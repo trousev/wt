@@ -110,6 +110,7 @@ def _iterm2_build_layout(
     tab_color: tuple[int, int, int] | None = None,
     first_pane_command: str | None = None,
     icon_path: str | None = None,
+    bottom_left_command: str | None = None,
 ) -> str:
     agent = first_pane_command if first_pane_command else _get_coding_agent()
     script = f"""\
@@ -141,6 +142,8 @@ async def main(connection):
     # Configure all panes: set title and cd into worktree
     wt_path = {wt_path!r}
     title = {pane_title!r}
+    agent_cmd = {agent!r}
+    bottom_left_cmd = {bottom_left_command!r}
     for s in (s0, s1, s2, s3, s4):
         # Show only session name as the pane title
         profile = iterm2.LocalWriteOnlyProfile()
@@ -149,7 +152,9 @@ async def main(connection):
         await s.async_set_profile_properties(profile)
         await s.async_set_name(title)
         if s is s0:
-            await s.async_send_text(f"cd {{wt_path}} && {agent}\\n")
+            await s.async_send_text(f"cd {{wt_path}} && {{agent_cmd}}\\n")
+        elif s is s1 and bottom_left_cmd:
+            await s.async_send_text(f"cd {{wt_path}} && {{bottom_left_cmd}}\\n")
         elif s is s3:
             await s.async_send_text(f"cd {{wt_path}} && lm setup\\n")
         elif s is s4:
@@ -197,7 +202,7 @@ async def main(connection):
             ic.set_custom_icon_path(icon_path)
             await s.async_set_profile_properties(ic)
 
-    # Focus the top-left pane where Claude runs
+    # Focus the top-left pane where the agent runs
     await s0.async_activate()
 
     # Print tab_id so the caller can capture it for cleanup
@@ -312,6 +317,7 @@ def _wezterm_build_layout(
     tab_color: tuple[int, int, int] | None = None,
     first_pane_command: str | None = None,
     icon_path: str | None = None,
+    bottom_left_command: str | None = None,
 ) -> str:
     agent = first_pane_command if first_pane_command else _get_coding_agent()
     s0 = _wezterm_run(["spawn", "--cwd", wt_path])
@@ -327,6 +333,8 @@ def _wezterm_build_layout(
     pane_ids = {"s0": s0, "s1": s1, "s2": s2, "s3": s3, "s4": s4}
 
     _wezterm_run(["send-text", "--pane-id", s0, f"{agent}\n"])
+    if bottom_left_command:
+        _wezterm_run(["send-text", "--pane-id", s1, f"{bottom_left_command}\n"])
     _wezterm_run(["send-text", "--pane-id", s3, "lm setup\n"])
     _wezterm_run(["send-text", "--pane-id", s4, "lm pull --watch\n"])
 
@@ -692,17 +700,24 @@ def build_layout(
     tab_color: tuple[int, int, int] | None = None,
     first_pane_command: str | None = None,
     icon_path: str | None = None,
+    bottom_left_command: str | None = None,
 ) -> str:
     """Create a multi-pane tab layout. Returns tab_id.
 
     If first_pane_command is provided, it will be run in the first pane instead of the default agent.
+    If bottom_left_command is provided, it will be run in the bottom-left pane instead of just cd-ing into the worktree.
     If icon_path is provided, a custom tab icon will be set (iTerm2 only).
     """
     backend = _get_backend()
     if not backend:
         raise RuntimeError("no supported terminal emulator found")
     return _BACKENDS[backend]["build_layout"](
-        wt_path, pane_title, tab_color, first_pane_command, icon_path=icon_path
+        wt_path,
+        pane_title,
+        tab_color,
+        first_pane_command,
+        icon_path=icon_path,
+        bottom_left_command=bottom_left_command,
     )
 
 

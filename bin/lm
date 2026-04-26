@@ -272,6 +272,7 @@ BOT_REVIEWER_LOGINS = frozenset({"claude"})
 
 ALIASES: dict[str, list[str]] = {
     "new": ["n"],
+    "fix": ["f"],
     "warp": ["w"],
     "restore": ["re"],
     "destroy": ["d"],
@@ -769,21 +770,14 @@ def _get_icon_path_for_current_repo() -> str | None:
     return config.get_icon_path_if_exists(repo_name)
 
 
-def cmd_new(args: argparse.Namespace) -> None:
-    ensure_git_repo()
-
-    if not terminal.is_available():
-        die("no supported terminal emulator found (install iTerm2 shell integration)")
-
-    repo_root = get_repo_root()
-
-    if args.branch:
-        branch = args.branch
-        if branch_exists(branch):
-            die(f"branch '{branch}' already exists")
-    else:
-        branch = generate_unique_branch_name()
-
+def _create_worktree(
+    branch: str,
+    base: str | None,
+    repo_root: str,
+    *,
+    first_pane_command: str | None = None,
+    bottom_left_command: str | None = None,
+) -> None:
     wt_dir = branch.replace("/", "-")
     wt_base = os.path.expanduser("~/.worktrees")
     wt_path = os.path.join(wt_base, wt_dir)
@@ -792,22 +786,6 @@ def cmd_new(args: argparse.Namespace) -> None:
         die(f"worktree directory already exists: {wt_path}")
 
     os.makedirs(wt_base, exist_ok=True)
-
-    base = args.base
-    if not base:
-        default_branch = detect_remote_default_branch()
-        if default_branch:
-            if not fetch_remote_branch(default_branch):
-                print(
-                    f"warning: could not fetch origin/{default_branch} (offline?), using local ref",
-                    file=sys.stderr,
-                )
-            base = f"origin/{default_branch}"
-        else:
-            print(
-                "warning: could not detect remote default branch, falling back to HEAD",
-                file=sys.stderr,
-            )
 
     print(f"creating worktree: {branch} -> {wt_path}", file=sys.stderr)
     try:
@@ -836,7 +814,14 @@ def cmd_new(args: argparse.Namespace) -> None:
     tab_color = TAB_COLORS[STATUSES[DEFAULT_STATUS]["color"]]
     icon_path = _get_icon_path_for_current_repo()
     try:
-        terminal.build_layout(wt_path, pane_title, tab_color=tab_color, icon_path=icon_path)
+        terminal.build_layout(
+            wt_path,
+            pane_title,
+            tab_color=tab_color,
+            first_pane_command=first_pane_command,
+            bottom_left_command=bottom_left_command,
+            icon_path=icon_path,
+        )
     except Exception as exc:
         print(f"terminal layout failed ({exc}), cleaning up…", file=sys.stderr)
         remove_status(wt_path)
@@ -844,6 +829,92 @@ def cmd_new(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     print(f"ready: {branch}", file=sys.stderr)
+
+
+def cmd_new(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not terminal.is_available():
+        die("no supported terminal emulator found (install iTerm2 shell integration)")
+
+    repo_root = get_repo_root()
+
+    if args.branch:
+        branch = args.branch
+        if branch_exists(branch):
+            die(f"branch '{branch}' already exists")
+    else:
+        branch = generate_unique_branch_name()
+
+    base = args.base
+    if not base:
+        default_branch = detect_remote_default_branch()
+        if default_branch:
+            if not fetch_remote_branch(default_branch):
+                print(
+                    f"warning: could not fetch origin/{default_branch} (offline?), using local ref",
+                    file=sys.stderr,
+                )
+            base = f"origin/{default_branch}"
+        else:
+            print(
+                "warning: could not detect remote default branch, falling back to HEAD",
+                file=sys.stderr,
+            )
+
+    _create_worktree(branch, base, repo_root)
+
+
+def cmd_fix(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+
+    if not terminal.is_available():
+        die("no supported terminal emulator found (install iTerm2 shell integration)")
+
+    repo_root = get_repo_root()
+
+    if args.branch:
+        branch = args.branch
+        if branch_exists(branch):
+            die(f"branch '{branch}' already exists")
+    else:
+        branch = generate_unique_branch_name()
+
+    base = args.base
+    if not base:
+        default_branch = detect_remote_default_branch()
+        if default_branch:
+            if not fetch_remote_branch(default_branch):
+                print(
+                    f"warning: could not fetch origin/{default_branch} (offline?), using local ref",
+                    file=sys.stderr,
+                )
+            base = f"origin/{default_branch}"
+        else:
+            print(
+                "warning: could not detect remote default branch, falling back to HEAD",
+                file=sys.stderr,
+            )
+
+    agent_name = os.environ.get("SHORTCUTS_CODING_AGENT", "claude")
+    url = args.url
+
+    if agent_name == "claude":
+        first_pane_command = f'claude "You should fix the issue: {url}"'
+    elif agent_name == "opencode":
+        first_pane_command = f'opencode --prompt "You should fix the issue: {url}"'
+    else:
+        die(f"unsupported agent '{agent_name}' for lm fix. Supported: claude, opencode")
+
+    bottom_left_command = f"lm rename --from-issue {url}"
+
+    _create_worktree(
+        branch,
+        base,
+        repo_root,
+        first_pane_command=first_pane_command,
+        bottom_left_command=bottom_left_command,
+    )
 
 
 def cmd_warp(args: argparse.Namespace) -> None:
@@ -1096,6 +1167,25 @@ def cmd_destroy(args: argparse.Namespace) -> None:
             pass
 
 
+def _fetch_issue_title(url: str) -> str | None:
+    """Fetch the title of a GitHub issue or PR via gh CLI."""
+    for subcmd in ("issue", "pr"):
+        try:
+            result = subprocess.run(
+                ["gh", subcmd, "view", url, "--json", "title"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            data = json.loads(result.stdout)
+            title = data.get("title")
+            if title:
+                return title
+        except (subprocess.CalledProcessError, json.JSONDecodeError):
+            pass
+    return None
+
+
 def cmd_rename(args: argparse.Namespace) -> None:
     ensure_git_repo()
 
@@ -1109,10 +1199,70 @@ def cmd_rename(args: argparse.Namespace) -> None:
     if old_branch == "HEAD":
         die("detached HEAD — cannot rename")
 
+    if args.name and args.from_issue:
+        die("--name and --from-issue are mutually exclusive")
+
     if args.name:
         new_branch = args.name
         if args.verbose:
             print(f"[lm] debug: using explicit branch name: {new_branch}")
+    elif args.from_issue:
+        url = args.from_issue
+        issue_title = _fetch_issue_title(url)
+        if not issue_title:
+            die(f"could not fetch title from {url}")
+
+        main_branch = get_main_branch()
+        if args.verbose:
+            print(f"[lm] debug: main_branch={main_branch}")
+        try:
+            merge_base = run_git("merge-base", "HEAD", f"origin/{main_branch}")
+        except subprocess.CalledProcessError:
+            die(f"could not find merge-base with origin/{main_branch}")
+        try:
+            diff = run_git("diff", merge_base)
+        except subprocess.CalledProcessError:
+            die("could not generate diff")
+        if not diff:
+            die("no changes vs main — nothing to name")
+
+        if args.verbose:
+            print(f"[lm] debug: diff length={len(diff)} chars")
+
+        from lm import agentic
+
+        prompt = f"""You are in a git worktree. Your task is to rename the current branch.
+
+Issue URL: {url}
+Issue title: {issue_title}
+
+Steps:
+1. Analyze the diff between HEAD and origin/{main_branch}
+2. Generate a good branch name (kebab-case, 2-4 words, descriptive) based on the issue
+3. Check if a branch with that name already exists: git branch -a | grep <name>
+4. If it exists, try a different name
+5. Rename the branch: git branch -m {old_branch} <new-name>
+6. Update terminal pane title if possible (optional)
+
+IMPORTANT: Actually run git branch -m to rename the branch. Don't just suggest it."""
+
+        import os
+        agent_name = os.environ.get("SHORTCUTS_CODING_AGENT", "claude")
+        if args.verbose:
+            print(f"[lm] debug: running agent: {agent_name}")
+
+        agentic.run_agent(prompt, verbose=args.verbose)
+
+        try:
+            new_branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+        except subprocess.CalledProcessError:
+            die("could not determine branch after rename")
+
+        if new_branch == old_branch:
+            die("agent failed to rename branch")
+
+        if args.verbose:
+            print(f"[lm] debug: agent renamed to: {new_branch}")
     else:
         main_branch = get_main_branch()
         if args.verbose:
@@ -1498,6 +1648,15 @@ def main() -> None:
         "--base", help="Base ref for the new branch (default: origin's default branch)"
     )
 
+    p_fix = subs.add_parser(
+        "fix", aliases=ALIASES["fix"], help="Create a worktree to fix a GitHub issue"
+    )
+    p_fix.add_argument("url", help="GitHub issue or PR URL")
+    p_fix.add_argument("--branch", "-b", help="Explicit branch name (default: random)")
+    p_fix.add_argument(
+        "--base", help="Base ref for the new branch (default: origin's default branch)"
+    )
+
     p_warp = subs.add_parser(
         "warp", aliases=ALIASES["warp"], help="Create a worktree for an existing branch"
     )
@@ -1529,6 +1688,7 @@ def main() -> None:
         help="Rename current worktree branch using AI-generated name",
     )
     p_rename.add_argument("--name", "-n", help="Explicit new branch name (skip AI generation)")
+    p_rename.add_argument("--from-issue", help="GitHub issue/PR URL to base rename on")
     p_rename.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
 
     subs.add_parser("list", aliases=ALIASES["list"], help="List worktrees under ~/.worktrees/")
@@ -1593,6 +1753,7 @@ def main() -> None:
 
     dispatch = {
         "new": cmd_new,
+        "fix": cmd_fix,
         "warp": cmd_warp,
         "restore": cmd_restore,
         "destroy": cmd_destroy,
