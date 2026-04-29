@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import yaml
 
 from lm import config, terminal
+from lm.llm import call_llm_api
 from lm.terminal import TAB_COLORS
 
 _WORDS_1 = (
@@ -1617,6 +1618,45 @@ def cmd_config(args: argparse.Namespace) -> None:
         print(f"warning: {warning}")
 
 
+def cmd_feedback(args: argparse.Namespace) -> None:
+    ensure_git_repo()
+    ensure_gh_available()
+
+    feedback = args.feedback
+    if not feedback:
+        die("no feedback provided")
+
+    repo_name = config.get_repo_name()
+
+    system_prompt = (
+        "Generate a concise, descriptive GitHub issue title from the user feedback. "
+        "The title should be under 80 characters. "
+        "Return ONLY the title text, with no quotes, no markdown, and no explanations."
+    )
+
+    title = call_llm_api(feedback, system_prompt=system_prompt)
+    if not title:
+        die("failed to generate issue title from LLM")
+
+    title = title.strip().strip('"\'')
+
+    cmd = ["gh", "issue", "create", "--title", title, "--body", feedback]
+    if repo_name:
+        cmd.extend(["--repo", repo_name])
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        url = result.stdout.strip()
+        print(f"\nIssue created: {url}")
+    except subprocess.CalledProcessError as exc:
+        die(f"failed to create issue: {exc.stderr.strip()}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="lm",
@@ -1730,6 +1770,11 @@ def main() -> None:
         "--quality", "-q", default="low", help="Image quality (default: low)"
     )
 
+    p_feedback = subs.add_parser(
+        "feedback", help="Create a GitHub issue with feedback text"
+    )
+    p_feedback.add_argument("feedback", help="Feedback text for the issue")
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -1752,6 +1797,7 @@ def main() -> None:
         "run": cmd_run,
         "config": cmd_config,
         "create-icon": cmd_create_icon,
+        "feedback": cmd_feedback,
     }
     for cmd_name, alias_list in ALIASES.items():
         for alias in alias_list:
