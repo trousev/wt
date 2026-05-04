@@ -1619,14 +1619,13 @@ def cmd_config(args: argparse.Namespace) -> None:
 
 
 def cmd_feedback(args: argparse.Namespace) -> None:
-    ensure_git_repo()
     ensure_gh_available()
 
     feedback = args.feedback
     if not feedback:
         die("no feedback provided")
 
-    repo_name = config.get_repo_name()
+    repo_name = "trousev/wt"
 
     system_prompt = (
         "Generate a concise, descriptive GitHub issue title from the user feedback. "
