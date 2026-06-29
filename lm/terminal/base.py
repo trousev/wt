@@ -44,9 +44,7 @@ def _get_pane_info_path(wt_path: str) -> str:
     return os.path.join(_get_worktrees_dir(), f"{dirname}.json")
 
 
-def _save_pane_info(
-    wt_path: str, pane_ids: dict[str, str], tab_id: str | None = None
-) -> None:
+def _save_pane_info(wt_path: str, pane_ids: dict[str, str], tab_id: str | None = None) -> None:
     """Save pane IDs and tab ID to a JSON file."""
     path = _get_pane_info_path(wt_path)
     data: dict = {"panes": pane_ids}
@@ -83,6 +81,11 @@ def detect() -> str | None:
     identified.
     """
     term_program = os.environ.get("TERM_PROGRAM", "")
+
+    # cmux sets TERM_PROGRAM=ghostty, so check cmux-specific env vars first
+    if "CMUX_WORKSPACE_ID" in os.environ or "CMUX_SURFACE_ID" in os.environ:
+        return "Cmux"
+
     if term_program == "iTerm.app":
         return "iTerm2"
     if term_program == "WezTerm":
@@ -179,9 +182,7 @@ class Terminal(ABC):
         """Set the title of a tab."""
 
     @abstractmethod
-    def set_tab_color(
-        self, tab_ref: str, color: tuple[int, int, int]
-    ) -> None:
+    def set_tab_color(self, tab_ref: str, color: tuple[int, int, int]) -> None:
         """Set the tab colour.  A no‑op if the terminal doesn't support it."""
 
     @abstractmethod
@@ -286,9 +287,7 @@ class Terminal(ABC):
             if icon_path:
                 self.set_tab_icon(session_id, icon_path)
 
-    def rename_pane_titles(
-        self, new_title: str, session_id: str | None = None
-    ) -> None:
+    def rename_pane_titles(self, new_title: str, session_id: str | None = None) -> None:
         """Update the tab title.
 
         *session_id* is the tab reference for backward compatibility.
