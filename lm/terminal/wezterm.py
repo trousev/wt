@@ -57,7 +57,14 @@ class WezTermTerminal(Terminal):
     def _find_first_pane_for_tab(self, tab_ref: str) -> str | None:
         """Return any pane ID belonging to the tab (used as a handle for splits)."""
         panes = self._find_tab_panes(tab_ref)
-        return panes[0] if panes else None
+        if panes:
+            return panes[0]
+        # tab_ref might be a pane_id (create_tab fallback when _find_tab_for_pane fails)
+        tab_id = self._find_tab_for_pane(tab_ref)
+        if tab_id:
+            panes = self._find_tab_panes(tab_id)
+            return panes[0] if panes else None
+        return None
 
     def _find_tab_for_pane(self, pane_id: str) -> str | None:
         """Find the tab ID that contains a given pane."""
@@ -178,6 +185,11 @@ class WezTermTerminal(Terminal):
 
     def close_tab(self, tab_ref: str) -> None:
         panes = self._find_tab_panes(tab_ref)
+        if not panes:
+            # tab_ref might be a pane_id (create_tab fallback)
+            tab_id = self._find_tab_for_pane(tab_ref)
+            if tab_id:
+                panes = self._find_tab_panes(tab_id)
         for pane_id in panes:
             subprocess.run(
                 ["wezterm", "cli", "kill-pane", "--pane-id", pane_id],
