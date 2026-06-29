@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 
-from lm.terminal.base import Terminal, _load_pane_info, _remove_pane_info
+from lm.terminal.base import Terminal
 
 
 class WezTermTerminal(Terminal):
@@ -184,38 +184,14 @@ class WezTermTerminal(Terminal):
         return False  # not supported
 
     def close_tab(self, tab_ref: str) -> None:
-        panes = self._find_tab_panes(tab_ref)
-        if not panes:
-            # tab_ref might be a pane_id (create_tab fallback)
-            tab_id = self._find_tab_for_pane(tab_ref)
-            if tab_id:
-                panes = self._find_tab_panes(tab_id)
-        for pane_id in panes:
+        tab_id = tab_ref if self._find_tab_panes(tab_ref) else self._find_tab_for_pane(tab_ref)
+        if tab_id:
             subprocess.run(
-                ["wezterm", "cli", "kill-pane", "--pane-id", pane_id],
+                ["wezterm", "cli", "kill-tab", "--tab-id", tab_id],
                 capture_output=True,
                 text=True,
                 check=False,
             )
-
-    def kill_worktree_panes(self, wt_path: str) -> None:
-        pane_info = _load_pane_info(wt_path)
-        if not pane_info or "panes" not in pane_info:
-            return
-
-        pane_ids = list(pane_info["panes"].values())
-        if not pane_ids:
-            return
-
-        for pane_id in pane_ids:
-            subprocess.run(
-                ["wezterm", "cli", "kill-pane", "--pane-id", pane_id],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-
-        _remove_pane_info(wt_path)
 
     def close_current_tab(self) -> None:
         subprocess.run(["wezterm", "cli", "kill-tab"], check=False)
