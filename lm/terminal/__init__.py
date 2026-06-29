@@ -32,6 +32,7 @@ from lm.terminal.base import (
     _save_pane_info,
     detect,
 )
+from lm.terminal.cmux import CmuxTerminal
 from lm.terminal.ghostty import GhosttyTerminal
 from lm.terminal.iterm2 import Iterm2Terminal
 from lm.terminal.wezterm import WezTermTerminal
@@ -40,6 +41,7 @@ from lm.terminal.wezterm import WezTermTerminal
 get_current_terminal = detect
 
 _TERMINAL_BACKEND_MAP: dict[str, type[Terminal]] = {
+    "Cmux": CmuxTerminal,
     "iTerm2": Iterm2Terminal,
     "WezTerm": WezTermTerminal,
     "Ghostty": GhosttyTerminal,
@@ -73,6 +75,7 @@ def _require_terminal() -> Terminal:
 # ---------------------------------------------------------------------------
 # Module‑level backward‑compatibility wrappers
 # ---------------------------------------------------------------------------
+
 
 def is_available() -> bool:
     """``True`` if we are inside a supported terminal and its tools are ready."""
