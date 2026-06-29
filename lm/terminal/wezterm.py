@@ -184,17 +184,30 @@ class WezTermTerminal(Terminal):
         return False  # not supported
 
     def close_tab(self, tab_ref: str) -> None:
-        tab_id = tab_ref if self._find_tab_panes(tab_ref) else self._find_tab_for_pane(tab_ref)
-        if tab_id:
+        panes = self._find_tab_panes(tab_ref)
+        if not panes:
+            tab_id = self._find_tab_for_pane(tab_ref)
+            if tab_id:
+                panes = self._find_tab_panes(tab_id)
+        if not panes:
+            return
+
+        current = os.environ.get("WEZTERM_PANE")
+        # kill the pane we're sitting in LAST, otherwise the script dies
+        # mid-loop and the remaining panes stay alive
+        ordered = sorted(panes, key=lambda p: p == current)
+        for pane_id in ordered:
             subprocess.run(
-                ["wezterm", "cli", "kill-tab", "--tab-id", tab_id],
+                ["wezterm", "cli", "kill-pane", "--pane-id", pane_id],
                 capture_output=True,
                 text=True,
                 check=False,
             )
 
     def close_current_tab(self) -> None:
-        subprocess.run(["wezterm", "cli", "kill-tab"], check=False)
+        tab_ref = self.current_tab_ref()
+        if tab_ref:
+            self.close_tab(tab_ref)
 
     def current_tab_ref(self) -> str | None:
         tabs = self._list_tabs()
