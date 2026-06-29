@@ -2,6 +2,14 @@
 """lm — create git worktrees with random branch names and terminal multi-pane layouts.
 Supports iTerm2 and Wezterm backends."""
 
+import os
+import sys
+
+_SCRIPT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_VENV_PYTHON = os.path.join(_SCRIPT_DIR, ".venv", "bin", "python3")
+if os.path.exists(_VENV_PYTHON) and sys.executable != _VENV_PYTHON:
+    os.execv(_VENV_PYTHON, [_VENV_PYTHON] + sys.argv)
+
 import argparse
 import json
 import os
