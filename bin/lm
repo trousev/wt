@@ -836,7 +836,10 @@ def cmd_new(args: argparse.Namespace) -> None:
     ensure_git_repo()
 
     if not terminal.is_available():
-        die("no supported terminal emulator found (install iTerm2 shell integration)")
+        detected = terminal.get_current_terminal()
+        if detected:
+            die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
+        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
 
     repo_root = get_repo_root()
 
@@ -870,7 +873,10 @@ def cmd_fix(args: argparse.Namespace) -> None:
     ensure_git_repo()
 
     if not terminal.is_available():
-        die("no supported terminal emulator found (install iTerm2 shell integration)")
+        detected = terminal.get_current_terminal()
+        if detected:
+            die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
+        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
 
     repo_root = get_repo_root()
 
@@ -922,7 +928,10 @@ def cmd_warp(args: argparse.Namespace) -> None:
     ensure_git_repo()
 
     if not terminal.is_available():
-        die("no supported terminal emulator found (install iTerm2 shell integration)")
+        detected = terminal.get_current_terminal()
+        if detected:
+            die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
+        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
 
     repo_root = get_repo_root()
     branch = args.branch
@@ -974,7 +983,10 @@ def cmd_restore(args: argparse.Namespace) -> None:
     ensure_git_repo()
 
     if not terminal.is_available():
-        die("no supported terminal emulator found (install iTerm2 shell integration)")
+        detected = terminal.get_current_terminal()
+        if detected:
+            die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
+        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
 
     repo_root = get_repo_root()
     target = args.target

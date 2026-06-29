@@ -914,32 +914,65 @@ _BACKENDS = {
 }
 
 
-_TERM_PROGRAM_MAP = {
-    "iTerm.app": "iterm2",
+def get_current_terminal() -> str | None:
+    """Detect the current terminal emulator from environment variables.
+
+    Checks TERM_PROGRAM first (most authoritative), then falls back to
+    other env-var heuristics.  Returns None when the terminal cannot be
+    identified.
+    """
+    term_program = os.environ.get("TERM_PROGRAM", "")
+    if term_program == "iTerm.app":
+        return "iTerm2"
+    if term_program == "WezTerm":
+        return "WezTerm"
+    if term_program == "Ghostty":
+        return "Ghostty"
+    if term_program == "Apple_Terminal":
+        return "Apple_Terminal"
+    if term_program == "kitty":
+        return "kitty"
+    if term_program == "vscode":
+        return "vscode"
+
+    # TERM_PROGRAM not set (or unrecognised) – try other heuristics
+    if "TMUX" in os.environ:
+        return "tmux"
+    if "WEZTERM_PANE" in os.environ:
+        return "WezTerm"
+    if "ITERM_SESSION_ID" in os.environ:
+        return "iTerm2"
+    if "GHOSTTY_RESOURCES_DIR" in os.environ:
+        return "Ghostty"
+    return None
+
+
+_TERMINAL_BACKEND_MAP: dict[str, str] = {
+    "iTerm2": "iterm2",
     "WezTerm": "wezterm",
+    "Ghostty": "ghostty",
 }
 
 
 def _get_backend() -> str | None:
-    """Detect the active terminal backend.
+    """Resolve the active terminal backend from environment variables only.
 
-    Checks TERM_PROGRAM first to prefer the terminal we're actually running
-    inside, then falls back to the first installed backend.
+    Returns the backend name for the detected terminal regardless of whether
+    the backend's CLI tools are actually on PATH.  Callers that need to
+    verify tool availability should use *is_available* instead.
     """
-    term = os.environ.get("TERM_PROGRAM", "")
-    preferred = _TERM_PROGRAM_MAP.get(term)
-    if preferred and preferred in _BACKENDS and _BACKENDS[preferred]["is_available"]():
-        return preferred
-
-    for name, funcs in _BACKENDS.items():
-        if funcs["is_available"]():
-            return name
-    return None
+    terminal = get_current_terminal()
+    if terminal is None:
+        return None
+    return _TERMINAL_BACKEND_MAP.get(terminal)
 
 
 def is_available() -> bool:
-    """True if any supported terminal backend is detected."""
-    return _get_backend() is not None
+    """True if we are inside a supported terminal **and** its tools are ready."""
+    backend = _get_backend()
+    if backend is None:
+        return False
+    return _BACKENDS[backend]["is_available"]()
 
 
 def build_layout(
