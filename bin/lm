@@ -1506,42 +1506,16 @@ def cmd_open(_args: argparse.Namespace) -> None:
     subprocess.run(["open", f"http://localhost:{port}"], check=True)
 
 
-def cmd_pr(args: argparse.Namespace) -> None:
+def cmd_pr(_args: argparse.Namespace) -> None:
     ensure_git_repo()
 
     if not is_inside_worktree():
         die("not inside a worktree — run this from a worktree directory")
 
     try:
-        branch = run_git("rev-parse", "--abbrev-ref", "HEAD")
+        subprocess.run(["gh", "pr", "view", "--web"], check=True)
     except subprocess.CalledProcessError:
-        die("could not determine current branch")
-
-    if branch.startswith("rename/"):
-        print(f"on placeholder branch '{branch}', renaming first…", file=sys.stderr)
-        cmd_rename(argparse.Namespace(name=None, verbose=False))
-
-    from lm import agentic
-
-    prompt = (
-        "You are in a git worktree. Create a pull request for the current branch.\n"
-        "\n"
-        "Steps:\n"
-        "1. Run `git context -a` to understand the full scope of changes\n"
-        "2. If there are uncommitted changes, commit them with a clear message\n"
-        "3. Push the branch to origin\n"
-        "4. Create a pull request with `gh pr create` (descriptive title and body)\n"
-        "5. Open the PR in the browser with `gh pr view --web`\n"
-        "\n"
-        "If a PR already exists, just open it with `gh pr view --web`."
-    )
-
-    agentic.run_agent(prompt, verbose=args.verbose if hasattr(args, 'verbose') else False)
-
-    try:
-        run_git("pr", "view", "--web", "--no-generator")
-    except subprocess.CalledProcessError:
-        print("warning: could not verify PR (may not exist)", file=sys.stderr)
+        die("no pull request found for the current branch")
 
 
 def cmd_setup(_args: argparse.Namespace) -> None:
