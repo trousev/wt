@@ -366,6 +366,11 @@ def _get_wezterm_pane_id() -> str | None:
     return os.environ.get("WEZTERM_PANE")
 
 
+def _get_cmux_workspace_id() -> str | None:
+    """Return the workspace ref from CMUX_WORKSPACE_ID environment variable."""
+    return os.environ.get("CMUX_WORKSPACE_ID")
+
+
 def _status_dir() -> str:
     """Return the path to the status directory."""
     return os.path.join(os.path.expanduser("~/.worktrees"), ".status")
@@ -1329,11 +1334,12 @@ IMPORTANT: Actually run git branch -m to rename the branch. Don't just suggest i
 
     print(f"[lm] renamed branch: {old_branch} → {new_branch}")
 
-    session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+    session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id()
     if args.verbose:
         import os
         print(f"[lm] debug: WEZTERM_PANE={os.environ.get('WEZTERM_PANE')!r}")
         print(f"[lm] debug: ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID')!r}")
+        print(f"[lm] debug: CMUX_WORKSPACE_ID={os.environ.get('CMUX_WORKSPACE_ID')!r}")
         print(f"[lm] debug: session_id={session_id!r}, terminal_available={terminal.is_available()}")
 
     if session_id and terminal.is_available():
@@ -1411,7 +1417,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     tab_color = TAB_COLORS[STATUSES[status]["color"]]
     icon_path = _get_icon_path_for_current_repo()
 
-    session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+    session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id()
     try:
         terminal.update_tab_status(
             pane_title, tab_color, session_id=session_id, icon_path=icon_path
@@ -1450,7 +1456,7 @@ def _pull_once(wt_path: str, repo_root: str) -> None:
         pane_title = make_pane_label(repo_root, branch, status=new_status)
         tab_color = TAB_COLORS[STATUSES[new_status]["color"]]
         icon_path = _get_icon_path_for_current_repo()
-        session_id = _get_wezterm_pane_id() or _get_iterm_session_id()
+        session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id()
         try:
             terminal.update_tab_status(
                 pane_title, tab_color, session_id=session_id, icon_path=icon_path
