@@ -129,10 +129,37 @@ class CmuxTerminal(Terminal):
         self._run(["send", "--surface", pane_id, text])
 
     def set_tab_title(self, tab_ref: str, title: str) -> None:
-        pass  # cmux derives tab title from the active process
+        try:
+            self._run(
+                [
+                    "workspace-action",
+                    "--action",
+                    "set-description",
+                    "--description",
+                    title,
+                    "--workspace",
+                    tab_ref,
+                ]
+            )
+        except subprocess.CalledProcessError:
+            pass
 
     def set_tab_color(self, tab_ref: str, color: tuple[int, int, int]) -> None:
-        pass  # not supported via cmux CLI
+        hex_color = "#{:02x}{:02x}{:02x}".format(*color)
+        try:
+            self._run(
+                [
+                    "workspace-action",
+                    "--action",
+                    "set-color",
+                    "--color",
+                    hex_color,
+                    "--workspace",
+                    tab_ref,
+                ]
+            )
+        except subprocess.CalledProcessError:
+            pass
 
     def set_tab_icon(self, tab_ref: str, icon_path: str) -> bool:
         return False
