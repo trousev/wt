@@ -8,9 +8,8 @@ import json
 import re
 import shutil
 import subprocess
-import time
 
-from lm.terminal.base import Terminal
+from lm.terminal.base import Terminal, _get_coding_agent, _save_pane_info
 
 
 def _parse_ref(output: str, prefix: str) -> str:
@@ -19,13 +18,66 @@ def _parse_ref(output: str, prefix: str) -> str:
     return m.group(0) if m else ""
 
 
+def _layout_to_cmux(node: dict, default_cwd: str | None = None) -> dict:
+    """Convert our layout format to cmux's ``new-workspace --layout`` JSON."""
+    if "split" not in node:
+        leaf_cmd = node.get("command")
+        leaf_cwd = node.get("cwd") or default_cwd
+        cmd = None
+        if leaf_cmd and leaf_cwd:
+            cmd = f"cd {leaf_cwd} && {leaf_cmd}"
+        elif leaf_cmd:
+            cmd = leaf_cmd
+        elif leaf_cwd:
+            cmd = f"cd {leaf_cwd}"
+        surface: dict[str, object] = {"type": "terminal"}
+        if cmd:
+            surface["command"] = cmd
+        return {"pane": {"surfaces": [surface]}}
+
+    children = node["children"]
+    sizes = node["sizes"]
+    direction = "horizontal" if node["split"] == "cols" else "vertical"
+
+    if len(children) == 1:
+        return _layout_to_cmux(children[0], default_cwd)
+
+    total = sum(sizes)
+
+    cmux_children = [_layout_to_cmux(children[0], default_cwd)]
+
+    if len(children) == 2:
+        cmux_children.append(_layout_to_cmux(children[1], default_cwd))
+    else:
+        cmux_children.append(
+            _layout_to_cmux(
+                {
+                    "split": node["split"],
+                    "sizes": sizes[1:],
+                    "children": children[1:],
+                },
+                default_cwd,
+            )
+        )
+
+    return {
+        "direction": direction,
+        "split": sizes[0] / total,
+        "children": cmux_children,
+    }
+
+
 class CmuxTerminal(Terminal):
     """Terminal implementation for cmux on macOS.
 
     Uses the ``cmux`` CLI under the hood.  Layouts are realised by
-    sequencing ``new-split`` calls on the targeted workspace via
-    ``--workspace``.
+    passing the full tree to ``cmux new-workspace --layout`` which
+    handles proportional sizing natively.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._last_ws_ref: str | None = None
 
     @staticmethod
     def _run(args: list[str]) -> str:
@@ -61,68 +113,27 @@ class CmuxTerminal(Terminal):
         layout_tree: dict,
         cwd: str | None = None,
     ) -> dict[str, str]:
-        default_cwd = cwd
-        time.sleep(0.3)
+        try:
+            self._run(["close-workspace", "--workspace", tab_ref])
+        except subprocess.CalledProcessError:
+            pass
 
-        initial = self._current_surface(tab_ref)
-        if not initial:
-            raise RuntimeError(f"could not find any surface in workspace {tab_ref}")
+        cmux_layout = _layout_to_cmux(layout_tree, default_cwd=cwd)
 
-        leaves: list[tuple[str, str | None, str | None]] = []
+        ws_args = ["workspace", "create", "--layout", json.dumps(cmux_layout), "--focus", "true"]
+        if cwd:
+            ws_args.extend(["--cwd", cwd])
+        output = self._run(ws_args)
+        self._last_ws_ref = _parse_ref(output, "workspace")
+        if not self._last_ws_ref:
+            raise RuntimeError(f"could not parse workspace ref from: {output}")
 
-        def walk(node: dict, surface_id: str) -> None:
-            if "split" not in node:
-                leaves.append((surface_id, node.get("command"), node.get("cwd")))
-                return
-
-            children = node["children"]
-            if len(children) == 1:
-                walk(children[0], surface_id)
-                return
-
-            direction = "right" if node["split"] == "cols" else "down"
-
-            self._run(["focus-panel", "--panel", surface_id, "--workspace", tab_ref])
-            time.sleep(0.1)
-
-            output = self._run(["new-split", direction, "--workspace", tab_ref])
-            time.sleep(0.2)
-
-            new_surface = _parse_ref(output, "surface")
-            if not new_surface:
-                raise RuntimeError(f"could not parse surface ref from: {output}")
-
-            walk(children[0], surface_id)
-
-            if len(children) == 2:
-                walk(children[1], new_surface)
-            else:
-                walk(
-                    {
-                        "split": node["split"],
-                        "sizes": node["sizes"][1:],
-                        "children": children[1:],
-                    },
-                    new_surface,
-                )
-
-        walk(layout_tree, initial)
+        data = self._run_json(["list-panels", "--workspace", self._last_ws_ref])
+        surfaces = sorted(data.get("surfaces", []), key=lambda s: s["index"])
 
         result: dict[str, str] = {}
-        for i, (sid, command, leaf_cwd) in enumerate(leaves):
-            label = f"s{i}"
-            result[label] = sid
-            effective_cwd = leaf_cwd or default_cwd
-            text = ""
-            if command and effective_cwd:
-                text = f"cd {effective_cwd} && {command}\n"
-            elif command:
-                text = f"{command}\n"
-            elif effective_cwd:
-                text = f"cd {effective_cwd}\n"
-            if text:
-                self._run(["send", "--surface", sid, text])
-
+        for i, s in enumerate(surfaces):
+            result[f"s{i}"] = s["ref"]
         return result
 
     def send_input(self, pane_id: str, text: str) -> None:
@@ -176,7 +187,8 @@ class CmuxTerminal(Terminal):
         return items[0]["ref"] if items else ""
 
     def close_tab(self, tab_ref: str) -> None:
-        self._run(["close-workspace", "--workspace", tab_ref])
+        ref = self._last_ws_ref or tab_ref
+        self._run(["close-workspace", "--workspace", ref])
 
     def close_current_tab(self) -> None:
         self._run(["close-workspace"])
@@ -187,3 +199,79 @@ class CmuxTerminal(Terminal):
             return data.get("workspace_ref")
         except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
             return None
+
+    # -- cmux-specific overrides ---------------------------------------------
+
+    def build_layout(
+        self,
+        wt_path: str,
+        pane_title: str,
+        tab_color: tuple[int, int, int] | None = None,
+        first_pane_command: str | None = None,
+        icon_path: str | None = None,
+        bottom_left_command: str | None = None,
+    ) -> str:
+        agent = first_pane_command if first_pane_command else _get_coding_agent()
+
+        layout: dict = {
+            "split": "rows",
+            "sizes": [70, 30],
+            "children": [
+                {
+                    "split": "cols",
+                    "sizes": [60, 40],
+                    "children": [
+                        {"command": agent, "cwd": wt_path},
+                        {"cwd": wt_path},
+                    ],
+                },
+                {
+                    "split": "cols",
+                    "sizes": [40, 30, 30],
+                    "children": [
+                        (
+                            {"command": bottom_left_command, "cwd": wt_path}
+                            if bottom_left_command
+                            else {"cwd": wt_path}
+                        ),
+                        {"command": "lm setup", "cwd": wt_path},
+                        {"command": "lm pull --watch", "cwd": wt_path},
+                    ],
+                },
+            ],
+        }
+
+        cmux_layout = _layout_to_cmux(layout, default_cwd=wt_path)
+
+        ws_args = [
+            "workspace",
+            "create",
+            "--layout",
+            json.dumps(cmux_layout),
+            "--cwd",
+            wt_path,
+            "--focus",
+            "true",
+        ]
+        if pane_title:
+            ws_args.extend(["--name", pane_title])
+        output = self._run(ws_args)
+        tab_ref = _parse_ref(output, "workspace")
+        if not tab_ref:
+            raise RuntimeError(f"could not parse workspace ref from: {output}")
+        self._last_ws_ref = tab_ref
+
+        data = self._run_json(["list-panels", "--workspace", tab_ref])
+        surfaces = sorted(data.get("surfaces", []), key=lambda s: s["index"])
+
+        pane_map: dict[str, str] = {}
+        for i, s in enumerate(surfaces):
+            pane_map[f"s{i}"] = s["ref"]
+
+        if tab_color:
+            self.set_tab_color(tab_ref, tab_color)
+        if icon_path:
+            self.set_tab_icon(tab_ref, icon_path)
+
+        _save_pane_info(wt_path, pane_map, tab_ref)
+        return tab_ref
