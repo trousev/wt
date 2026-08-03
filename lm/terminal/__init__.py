@@ -1,5 +1,5 @@
 """Terminal emulator automation — interface (Terminal ABC) and
-per‑provider implementations (iTerm2, WezTerm, Ghostty).
+per‑provider implementations (iTerm2, WezTerm, Ghostty, Kitty).
 
 Quick start
 -----------
@@ -35,6 +35,7 @@ from lm.terminal.base import (
 from lm.terminal.cmux import CmuxTerminal
 from lm.terminal.ghostty import GhosttyTerminal
 from lm.terminal.iterm2 import Iterm2Terminal
+from lm.terminal.kitty import KittyTerminal
 from lm.terminal.wezterm import WezTermTerminal
 
 #: Backward‑compat alias
@@ -45,6 +46,7 @@ _TERMINAL_BACKEND_MAP: dict[str, type[Terminal]] = {
     "iTerm2": Iterm2Terminal,
     "WezTerm": WezTermTerminal,
     "Ghostty": GhosttyTerminal,
+    "kitty": KittyTerminal,
 }
 
 
