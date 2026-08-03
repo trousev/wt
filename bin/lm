@@ -371,6 +371,11 @@ def _get_cmux_workspace_id() -> str | None:
     return os.environ.get("CMUX_WORKSPACE_ID")
 
 
+def _get_kitty_tab_id() -> str | None:
+    """Return the window ID from KITTY_WINDOW_ID environment variable."""
+    return os.environ.get("KITTY_WINDOW_ID")
+
+
 def _status_dir() -> str:
     """Return the path to the status directory."""
     return os.path.join(os.path.expanduser("~/.worktrees"), ".status")
@@ -852,7 +857,7 @@ def cmd_new(args: argparse.Namespace) -> None:
         detected = terminal.get_current_terminal()
         if detected:
             die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
-        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
+        die("no supported terminal emulator found (iTerm2, WezTerm, Ghostty, or Kitty)")
 
     repo_root = get_repo_root()
 
@@ -889,7 +894,7 @@ def cmd_fix(args: argparse.Namespace) -> None:
         detected = terminal.get_current_terminal()
         if detected:
             die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
-        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
+        die("no supported terminal emulator found (iTerm2, WezTerm, Ghostty, or Kitty)")
 
     repo_root = get_repo_root()
 
@@ -944,7 +949,7 @@ def cmd_warp(args: argparse.Namespace) -> None:
         detected = terminal.get_current_terminal()
         if detected:
             die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
-        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
+        die("no supported terminal emulator found (iTerm2, WezTerm, Ghostty, or Kitty)")
 
     repo_root = get_repo_root()
     branch = args.branch
@@ -999,7 +1004,7 @@ def cmd_restore(args: argparse.Namespace) -> None:
         detected = terminal.get_current_terminal()
         if detected:
             die(f"terminal {detected!r} detected but its CLI tools are not on PATH")
-        die("no supported terminal emulator found (iTerm2, WezTerm, or Ghostty)")
+        die("no supported terminal emulator found (iTerm2, WezTerm, Ghostty, or Kitty)")
 
     repo_root = get_repo_root()
     target = args.target
@@ -1334,12 +1339,13 @@ IMPORTANT: Actually run git branch -m to rename the branch. Don't just suggest i
 
     print(f"[lm] renamed branch: {old_branch} → {new_branch}")
 
-    session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id()
+    session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id() or _get_kitty_tab_id()
     if args.verbose:
         import os
         print(f"[lm] debug: WEZTERM_PANE={os.environ.get('WEZTERM_PANE')!r}")
         print(f"[lm] debug: ITERM_SESSION_ID={os.environ.get('ITERM_SESSION_ID')!r}")
         print(f"[lm] debug: CMUX_WORKSPACE_ID={os.environ.get('CMUX_WORKSPACE_ID')!r}")
+        print(f"[lm] debug: KITTY_WINDOW_ID={os.environ.get('KITTY_WINDOW_ID')!r}")
         print(f"[lm] debug: session_id={session_id!r}, terminal_available={terminal.is_available()}")
 
     if session_id and terminal.is_available():
@@ -1417,7 +1423,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     tab_color = TAB_COLORS[STATUSES[status]["color"]]
     icon_path = _get_icon_path_for_current_repo()
 
-    session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id()
+    session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id() or _get_kitty_tab_id()
     try:
         terminal.update_tab_status(
             pane_title, tab_color, session_id=session_id, icon_path=icon_path
@@ -1456,7 +1462,7 @@ def _pull_once(wt_path: str, repo_root: str) -> None:
         pane_title = make_pane_label(repo_root, branch, status=new_status)
         tab_color = TAB_COLORS[STATUSES[new_status]["color"]]
         icon_path = _get_icon_path_for_current_repo()
-        session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id()
+        session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id() or _get_kitty_tab_id()
         try:
             terminal.update_tab_status(
                 pane_title, tab_color, session_id=session_id, icon_path=icon_path

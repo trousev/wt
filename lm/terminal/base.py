@@ -107,6 +107,13 @@ def detect() -> str | None:
         return "iTerm2"
     if "GHOSTTY_RESOURCES_DIR" in os.environ:
         return "Ghostty"
+
+    # Kitty does NOT set TERM_PROGRAM, so catch it via TERM or KITTY_WINDOW_ID.
+    if "KITTY_WINDOW_ID" in os.environ:
+        return "kitty"
+    if "kitty" in os.environ.get("TERM", ""):
+        return "kitty"
+
     return None
 
 
