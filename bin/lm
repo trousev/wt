@@ -411,6 +411,39 @@ def remove_status(wt_path: str) -> None:
         pass
 
 
+def _pane_info_path(wt_path: str) -> str:
+    """Return the path to the pane info JSON file for a worktree."""
+    dirname = os.path.basename(os.path.realpath(wt_path))
+    return os.path.join(os.path.expanduser("~/.worktrees"), f"{dirname}.json")
+
+
+def save_custom_title(wt_path: str, custom_title: str | None) -> None:
+    """Store (or clear) a custom title alongside the pane info."""
+    path = _pane_info_path(wt_path)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        data = {}
+    if custom_title:
+        data["custom_title"] = custom_title
+    else:
+        data.pop("custom_title", None)
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+
+def load_custom_title(wt_path: str) -> str | None:
+    """Load a previously stored custom title, or None."""
+    path = _pane_info_path(wt_path)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data.get("custom_title")
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
 def resolve_status(user_input: str) -> str:
     """Resolve user input (letter, name, or prefix) to canonical status name.
 
@@ -556,15 +589,22 @@ def determine_status_from_pr(pr_data: dict | None) -> str:
     return "pr"
 
 
-def make_pane_label(repo_dir: str, branch: str, status: str = "working") -> str:
-    """Build a short pane title like ``[W] ij:bold-nice``."""
+def make_pane_label(repo_dir: str, branch: str, status: str = "working", custom_label: str | None = None) -> str:
+    """Build a short pane title like ``[W] ij:bold-nice``.
+
+    If *custom_label* is provided, it replaces the branch-derived portion
+    of the label (everything after the colon).
+    """
     import re as _re
 
     letter = STATUSES[status]["letter"]
     name = os.path.basename(repo_dir)
     words = [w for w in _re.split(r"[^a-zA-Z0-9]+", name) if w]
     abbrev = "".join(w[0] for w in words[:2]).lower()
-    short = branch.removeprefix("rename/")
+    if custom_label:
+        short = custom_label
+    else:
+        short = branch.removeprefix("rename/")
     return f"[{letter}] {abbrev}:{short}"
 
 
@@ -796,6 +836,7 @@ def _create_worktree(
     *,
     first_pane_command: str | None = None,
     bottom_left_command: str | None = None,
+    custom_title: str | None = None,
 ) -> None:
     wt_dir = branch.replace("/", "-")
     wt_base = os.path.expanduser("~/.worktrees")
@@ -829,7 +870,7 @@ def _create_worktree(
         else:
             print(f"warning: '{item}' not found in repo root, skipping", file=sys.stderr)
 
-    pane_title = make_pane_label(repo_root, branch, status=DEFAULT_STATUS)
+    pane_title = make_pane_label(repo_root, branch, status=DEFAULT_STATUS, custom_label=custom_title)
     tab_color = TAB_COLORS[STATUSES[DEFAULT_STATUS]["color"]]
     icon_path = _get_icon_path_for_current_repo()
     try:
@@ -846,6 +887,9 @@ def _create_worktree(
         remove_status(wt_path)
         remove_worktree(wt_path, branch)
         sys.exit(1)
+
+    if custom_title:
+        save_custom_title(wt_path, custom_title)
 
     print(f"ready: {branch}", file=sys.stderr)
 
@@ -868,6 +912,8 @@ def cmd_new(args: argparse.Namespace) -> None:
     else:
         branch = generate_unique_branch_name()
 
+    custom_title = " ".join(args.title) if args.title else None
+
     base = args.base
     if not base:
         default_branch = detect_remote_default_branch()
@@ -884,7 +930,7 @@ def cmd_new(args: argparse.Namespace) -> None:
                 file=sys.stderr,
             )
 
-    _create_worktree(branch, base, repo_root)
+    _create_worktree(branch, base, repo_root, custom_title=custom_title)
 
 
 def cmd_fix(args: argparse.Namespace) -> None:
@@ -1358,6 +1404,12 @@ IMPORTANT: Actually run git branch -m to rename the branch. Don't just suggest i
         except Exception as e:
             if args.verbose:
                 print(f"[lm] debug: failed to rename tab title: {e}")
+        # Clear any custom title since the branch has been explicitly renamed.
+        wt_path = os.path.realpath(get_repo_root())
+        try:
+            save_custom_title(wt_path, None)
+        except Exception:
+            pass
     elif args.verbose:
         print(f"[lm] debug: skipping tab title update (session_id={session_id!r}, terminal_available={terminal.is_available()})")
 
@@ -1419,7 +1471,8 @@ def cmd_status(args: argparse.Namespace) -> None:
     status = resolve_status(args.status)
     write_status(wt_path, status)
 
-    pane_title = make_pane_label(repo_root, branch, status=status)
+    custom_label = load_custom_title(wt_path)
+    pane_title = make_pane_label(repo_root, branch, status=status, custom_label=custom_label)
     tab_color = TAB_COLORS[STATUSES[status]["color"]]
     icon_path = _get_icon_path_for_current_repo()
 
@@ -1459,7 +1512,8 @@ def _pull_once(wt_path: str, repo_root: str) -> None:
         print(f"{branch}: {old_status} (unchanged){url_display}")
 
     if terminal.is_available():
-        pane_title = make_pane_label(repo_root, branch, status=new_status)
+        custom_label = load_custom_title(wt_path)
+        pane_title = make_pane_label(repo_root, branch, status=new_status, custom_label=custom_label)
         tab_color = TAB_COLORS[STATUSES[new_status]["color"]]
         icon_path = _get_icon_path_for_current_repo()
         session_id = _get_wezterm_pane_id() or _get_iterm_session_id() or _get_cmux_workspace_id() or _get_kitty_tab_id()
@@ -1672,6 +1726,11 @@ def main() -> None:
 
     p_new = subs.add_parser(
         "new", aliases=ALIASES["new"], help="Create a worktree and open iTerm2 layout"
+    )
+    p_new.add_argument(
+        "title",
+        nargs="*",
+        help="Custom tab title (branch name is still auto-generated)",
     )
     p_new.add_argument("--branch", "-b", help="Explicit branch name (default: random)")
     p_new.add_argument(
