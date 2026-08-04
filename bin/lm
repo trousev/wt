@@ -290,6 +290,7 @@ ALIASES: dict[str, list[str]] = {
     "status": ["s"],
     "pull": ["pl"],
     "open": ["o"],
+    "port": ["p"],
     "setup": ["su"],
     "run": ["r"],
     "config": ["c"],
@@ -319,6 +320,7 @@ def _run_script(script_content: str | list[str]) -> None:
 
     env = os.environ.copy()
     env["CONDUCTOR_PORT"] = port
+    env["LM_PORT"] = port
 
     repo_root = get_repo_root()
     os.chdir(repo_root)
@@ -1555,14 +1557,23 @@ def cmd_pull(args: argparse.Namespace) -> None:
             pass
 
 
-def cmd_open(_args: argparse.Namespace) -> None:
+def _get_port() -> str:
+    """Return the deterministic port for the current working directory."""
     result = subprocess.run(
         [os.path.join(os.path.dirname(os.path.abspath(__file__)), "random-port")],
         capture_output=True,
         text=True,
         check=True,
     )
-    port = result.stdout.strip()
+    return result.stdout.strip()
+
+
+def cmd_port(_args: argparse.Namespace) -> None:
+    print(_get_port())
+
+
+def cmd_open(_args: argparse.Namespace) -> None:
+    port = _get_port()
     subprocess.run(["open", f"http://localhost:{port}"], check=True)
 
 
@@ -1802,6 +1813,12 @@ def main() -> None:
         help="Open localhost:<port> for this worktree in the browser",
     )
 
+    subs.add_parser(
+        "port",
+        aliases=ALIASES["port"],
+        help="Print the deterministic port for this worktree (9001–9050)",
+    )
+
     subs.add_parser("pr", help="Create a pull request using the coding agent")
 
     subs.add_parser(
@@ -1856,6 +1873,7 @@ def main() -> None:
         "status": cmd_status,
         "pull": cmd_pull,
         "open": cmd_open,
+        "port": cmd_port,
         "pr": cmd_pr,
         "setup": cmd_setup,
         "run": cmd_run,
