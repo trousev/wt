@@ -156,7 +156,7 @@ iterm2.run_until_complete(main)
             "    app = await iterm2.async_get_app(connection)",
             f"    tab = await _iterm2_find_tab(app, {tab_ref!r})",
             "    if not tab:",
-            f"        raise RuntimeError('tab {tab_ref!r} not found')",
+            f"        raise RuntimeError({f'tab {tab_ref} not found'!r})",
             "    s0 = tab.current_session",
             "",
         ]
