@@ -41,11 +41,8 @@ class Iterm2Terminal(Terminal):
 async def _iterm2_find_tab(app, tab_id):
     for window in app.terminal_windows:
         for tab in window.tabs:
-            if tab.tab_id == tab_id:
+            if tab_id == tab.tab_id or tab_id in (s.session_id for s in tab.sessions):
                 return tab
-    window = app.current_terminal_window
-    if window:
-        return window.current_tab
     return None
 """
 
